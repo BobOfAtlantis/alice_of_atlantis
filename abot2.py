@@ -776,10 +776,13 @@ class aBot2Agent(base_agent.BaseAgent):
         if trainer == -1:
             pass
             # done with the last epoch, close out.
-
-
         
         a = self.builder.get_action()
+
+        # set the old values for the next time through
+        self.old_empire_value = empire_value
+        self.old_time = current_time
+
         #print(f"action came back as: {a}")
         #Note: When calculating reward, be sure to log time since the last state.
 
