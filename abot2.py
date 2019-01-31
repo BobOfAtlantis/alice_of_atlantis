@@ -66,7 +66,7 @@ class aBot2Agent(base_agent.BaseAgent):
         print(f"episode: {self.episodes}")
 
         # if there is a builder, we need to close out its last action
-        if self.builder is not None:
+        if self.builder is not None and self.builder_running == True:
             #print("game ended, need to clear the buffer")
             self.finish_alice_the_builder()
 
@@ -729,6 +729,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
     # the first run needs to run the get_action without the wrap_up_action command
     def start_alice_the_builder(self, obs, args):
+        self.builder_running = True
         current_time = obs.observation["game_loop"][0]
         self.schedule_action(obs, current_time + 40, self.continue_alice_the_builder, {})
         self.old_empire_value = obs.observation["score_cumulative"][0]
@@ -757,7 +758,6 @@ class aBot2Agent(base_agent.BaseAgent):
         # check if alice has been initialized: if not, do that here.
         #print("You're calling alice the builder? That's all you had to say!")
         current_time = obs.observation["game_loop"][0]
-        self.schedule_action(obs, current_time + 40, self.continue_alice_the_builder, {})
 
         #obs.observation['score_cumulative']
         empire_value = obs.observation["score_cumulative"][0]
@@ -771,71 +771,47 @@ class aBot2Agent(base_agent.BaseAgent):
 
         trainer = self.builder.wrap_up_action(o, r, d, _)
         if trainer == 1:
-            pass
-            # done training for this epoch, either resign or just continue on without the builder bot.
-        if trainer == -1:
-            pass
+            print(f"last r of epoch: {r}")
+            # done training for this epoch, not sure how to quit the game, but if we don't schedule the next action, it'll just run out without any more buildings
+            self.builder_running = False
+            return
+        elif trainer == -1:
+            print(f"last r of final epoch: {r}")
+            self.builder_running = False
+            quit() # there has to be a pysc2 way of doing this same thing.
+            return
             # done with the last epoch, close out.
-        
-        a = self.builder.get_action()
-
-        # set the old values for the next time through
-        self.old_empire_value = empire_value
-        self.old_time = current_time
-
-        #print(f"action came back as: {a}")
-        #Note: When calculating reward, be sure to log time since the last state.
-
-        #s=np.array([current_time,minerals,empire_value], dtype=int)
-        #print(f"s: {s}")
-
-        # old state _s
-        #_s = self.alice_thebuilder_s
-        #_a = self.alice_thebuilder_a
-
-        #a = self.builder_actor.choose_action(s)
-        #print(f"a: {a}")
-        #int_a = util.round(a)
-
-        if a == 1: # train SCV
-            #print("  Alice Says: train an scv")
-            self.priority_queue.append([4, self.train_scv, {}])
-
-        elif a == 2: # build supply depot
-            #print("  Alice Says: build a supply depot")
-            self.priority_queue.append([4, self.make_supply_depot, {}])
-
         else:
-            #print("alice says: do a no_op")
-            pass
+            # we're still in the epoch, schedule the next decision point
+            self.schedule_action(obs, current_time + 40, self.continue_alice_the_builder, {})
+            a = self.builder.get_action()
 
-        #if _s is not None and _a is not None:
-            #r = change in empire value
-            #r = s[2] - _s[2]
-            #print(empire_value)
-            #r /= 10
-            #print("reward: " +str(r))
-            
-            #td_error = self.builder_critic.learn(_s, r, s, self.episodes)  # gradient = grad[r + gamma * V(s_) - V(s)]
-            #self.builder_actor.learn(_s, _a, td_error, self.episodes)  # true_gradient = grad[logPi(s,a) * td_error]
+            # set the old values for the next time through
+            self.old_empire_value = empire_value
+            self.old_time = current_time
 
-            #print(f"td_error: {td_error}")
+            if a == 1: # train SCV
+                #print("  Alice Says: train an scv")
+                self.priority_queue.append([4, self.train_scv, {}])
 
-        #print(f"state {s} action {a}")
-        #print(f"new state {s_} reward {r} done {done} info {info}")
-        
-        #self.alice_thebuilder_s = s
-        #self.alice_thebuilder_a = a
+            elif a == 2: # build supply depot
+                #print("  Alice Says: build a supply depot")
+                self.priority_queue.append([4, self.make_supply_depot, {}])
+
+            else:
+                #print("alice says: do a no_op")
+                pass
+
         return
 
     def finish_alice_the_builder(self):
+        self.builder_running = False
         #print("clearing buffer")
         o = self.old_o
         r = 0 # TODO: need to do a win / loss thing on this if we can get it 
         d = True
         _ = {}
         self.builder.wrap_up_action(o, r, d, _)
-
         return
 
 

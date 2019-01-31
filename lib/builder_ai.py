@@ -165,7 +165,7 @@ class Builder(object):
 
                 terminal = d or (self.ep_len == self.max_ep_len)
                 if terminal or (self.t==self.local_steps_per_epoch-1):
-                    print(f"here we are at the end of a thing: t={self.t} of {self.local_steps_per_epoch-1}")
+                    print(f"here we are at the end of an episode or epoch: t={self.t} of {self.local_steps_per_epoch-1}")
                     if not(terminal):
                         print('Warning: trajectory cut off by epoch at %d steps.'%self.ep_len)
                         
