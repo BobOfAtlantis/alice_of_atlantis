@@ -30,7 +30,7 @@ class Builder(object):
         self.ac_kwargs=dict(hidden_sizes=[64]*2)
         self.seed=0 
         self.steps_per_epoch=1000        
-        self.epochs=5                  
+        self.epochs=5
         self.gamma=0.99
         self.clip_ratio=0.2
         self.pi_lr=3e-4
@@ -281,7 +281,7 @@ class BuilderEnv():
 
         # get this stuff from the bot
         self.observation_space = gym.spaces.Box(low=0, high=100000, shape=(8,), dtype=np.int)
-        self.action_space = gym.spaces.Discrete(3)
+        self.action_space = gym.spaces.Discrete(8)
         if o is not None:
             return o
         elif self.o is not None:

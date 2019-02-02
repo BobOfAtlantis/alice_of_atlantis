@@ -1,10 +1,13 @@
 # Note: Thanks to Steven Brown for tutorials and Timo for quick responses when I had pysc2 questions
 
-# TODO:
-# Create a mode to record building locations for building types. When buildings go down, they go down from the building locations.
-# Building types: CC, Production (Barracks, Factory, Starport), Research (Engineering Bay, Armory), Supply
-# This should be as easy as playing through a game vs easy AI as a human, then loading the replay to record building locations.
-# Needs to be map specific, and starting location specific. Proxy strategies should still be on the table for the AI
+# Notes:
+# - The bot moves the screen by clicking on the minimap through the pysc2 pixel choice interface. 
+#   If the screen is moved in any other way, building locations will be off, and wall offs etc will fail. 
+# - When plotting building locations in the config files, currently the way to do it is to turn off the builder ai,
+#   Hand build the building, then have the game print out the building's location. SCV's or neighboring buildings will throw this off
+# - The first times the bot sees a map it'll look like it's going nuts as it scans the height charts of the map and saves the map to file
+#   This gives it x,y coords for each minimap location so that it can build buildings in the right spots.
+# - The PPO algorithm builder_ai (also alice_the_builder) is for build timings for buildings and units... still a lot of work to be done here.
 
 from decimal import Decimal
 import hashlib
@@ -34,6 +37,7 @@ class aBot2Agent(base_agent.BaseAgent):
     def setup(self, obs_spec, action_spec):
         super().setup(obs_spec, action_spec)
         self.builder = None
+        self.builder_running = False
         # tensorflow session
         #self.sess = tf.Session()
         
@@ -44,8 +48,6 @@ class aBot2Agent(base_agent.BaseAgent):
         #self.builder_critic = Critic(self.sess, n_features=3, lr=0.01)
 
         #self.sess.run(tf.global_variables_initializer())
-        
-        
 
         # screen dimensions in pixels (for the simple64 map it's 84x84)
         self.screen_dimensions = [obs_spec["feature_screen"][1],obs_spec["feature_screen"][2]]
@@ -218,7 +220,7 @@ class aBot2Agent(base_agent.BaseAgent):
     def step(self, obs):
         super().step(obs)
 
-        #time.sleep(0.1)
+        time.sleep(0.1)
         
         # what is our absolute game turn index
         # used in qtables and scheduling
@@ -265,10 +267,11 @@ class aBot2Agent(base_agent.BaseAgent):
                 [2, building_planner.load_building_plan, {"bot":self}],
                 #[3, self.train_scv, {}], # control grouping command center should be linked to this. Note: build order might not need this, but if it does, do it
                 [3, map_reader.load_map_data, {"bot":self}],
+                [3, map_reader.center_screen_on_main, {"bot":self}], # Important step. click on the minimap where the main base is... this aligns config stuff to the screen
                 [4, self.control_group_scvs, {}], # good for keeping count of current scvs. useful in build planning
                 #[5, self.make_supply_depot, {}], # choose supply depot location, schedule scv move to location, schedule build supply depot
-                [6, self.start_alice_the_builder, {}], # bring in Alice, THE BUILDER! Actor/Critic siloed for building buildings and units.
-                [8, self.schedule_print_data, {}] # regular printouts of what's going on.
+                [6, self.start_alice_the_builder, {}] # bring in Alice, THE BUILDER! Actor/Critic siloed for building buildings and units.
+                #[8, self.schedule_print_data, {}] # regular printouts of what's going on.
                 #[7, self.test_move_screen, {}]
             ]
 
@@ -352,8 +355,7 @@ class aBot2Agent(base_agent.BaseAgent):
             else:
                 self.callback_parameters = {"ctr":ctr}
                 self.callback_method = self.train_scv
-                action = self.try_perform_action(obs, to_do)
-                return action
+                return to_do
 
         self.callback_parameters = {}
         self.callback_method = None
@@ -419,11 +421,19 @@ class aBot2Agent(base_agent.BaseAgent):
     # add the planned depot to buildings
     # schedule to have the scv move to build the building
     # schedule to have the scv build the building
-    def make_supply_depot(self, obs, args):
+    def make_building(self, obs, args):
+        building_string = None
+        if "building"  in args:
+            building_string = args["building"]
+
+        building_type_string = None
+        if building_string == "supply depot": building_type_string = "supply depot"
+        elif building_string == "barracks": building_type_string = "production"
+
         #print("hey, let's prepare to build our first supply depot")
 
-        supply_depots = list(filter(lambda building: building["type"] == static.unit_ids["supply depot"], self.buildings))
-        supply_depot_locations = self.building_plan["supply depot"]
+        bldg_types = list(filter(lambda building: building["type"] == static.unit_ids[building_string], self.buildings))
+        bldg_type_locations = self.building_plan[building_type_string]
 
         #print("supply depots: " + str(supply_depots))
         #print("supply depot locations: " + str(supply_depot_locations))
@@ -431,12 +441,12 @@ class aBot2Agent(base_agent.BaseAgent):
         # find the first supply depot location without a supply depot already in buildings
         location = []
         building = None
-        for l in supply_depot_locations:
-            current_building = list(filter(lambda building: building["location"] == l, supply_depots))
+        for l in bldg_type_locations:
+            current_building = list(filter(lambda building: building["location"] == l, bldg_types))
             if len(current_building) == 0:
                 # add the supply depot to buildings with status: planned
                 location = l
-                building = {"type":static.unit_ids["supply depot"],"location":l,"status":"planned"}
+                building = {"type":static.unit_ids[building_string],"location":l,"status":"planned"}
                 self.buildings.append(building)
                 break
                 
@@ -453,20 +463,17 @@ class aBot2Agent(base_agent.BaseAgent):
 
             return
 
-        #print(f"cool, no supply depot currently at {location} we'll build one there!")
-        #print(str(self.buildings))
 
         # schedule an scv move to the location of the building location
         current_time = obs.observation["game_loop"][0]
 
-        # recurring action to print the location of the currently selected building
         # TODO: need to have a method to set this time correctly based on current income etc.
-        self.schedule_action(obs, current_time + 120, self.move_scv_to_location, {"location":location,"building":building, "schedule":True})
+        self.schedule_action(obs, current_time, self.move_scv_to_location, {"location":location,"building":building, "schedule":True})
         
 
         # schedule the building of the building at location with the scv on location
         # TODO: need to have a method to set this time correctly based on distance to location from the selected SCV
-        self.schedule_action(obs, current_time + 280, self.construct_building, {"building":building, "schedule":True})
+        self.schedule_action(obs, current_time + 140, self.construct_building, {"building":building, "schedule":True})
 
         self.callback_method = None
         self.callback_parameters = {}
@@ -572,7 +579,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
                 action = { 
                             "id"     :   build_action, 
-                            "params" :   [[static.params["now"]], screen_location] 
+                            "params" :   [[static.params["queued"]], screen_location] 
                          }
                 ret = self.try_perform_action(obs, action)
 
@@ -610,6 +617,65 @@ class aBot2Agent(base_agent.BaseAgent):
 
         self.callback_method = None
         self.callback_parameters = {}
+        return
+
+
+    def train_marine(self, obs, args):
+        # have we been here before? are we thrashing?
+        ctr = 0
+        if "ctr" in args:
+            ctr = args["ctr"]
+        ctr = ctr + 1
+
+        # TODO: check for available minerals, if there aren't enough set it in schedule and return False
+
+        # if a command center is selected, or multiple are selected... let's get right to it, and train an scv
+        if static.action_ids["train marine"] in obs.observation["available_actions"]:
+            # if the next thing to do isn't to press the build scv button... then try to select a command center again
+
+            to_do = { "id":static.action_ids["train marine"], 
+                      "params":[ [static.params["queued"]] ] 
+                    }
+            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
+
+            self.callback_method = None
+            self.callback_parameters = {}
+            return action
+
+        else: # barracks are not selected, let's select it
+            if ctr > 5:
+                # this is taking too long, abandon
+                self.callback_parameters = {}
+                self.callback_method = None
+                return
+
+            #TODO:
+            # check the multi select array to see if there are barracks already selected. If so, let's select them and start training marines
+            # check if there are command centers in the production control group (5)
+
+            to_do = self.select_building(obs, {"type":static.unit_ids['barracks'], "param":"select all"})
+            if to_do == None:
+                # There wasn't a barracks on screen, we must move to a barracks
+                self.callback_parameters = {"ctr":ctr}
+                self.callback_method = self.train_marine
+                return map_reader.center_screen_on_main(obs, {"bot":self})
+
+            else:
+                self.callback_parameters = {"ctr":ctr}
+                self.callback_method = self.train_marine
+                return to_do
+
+        self.callback_parameters = {}
+        self.callback_method = None
+        return
+
+            
+    def trigger_supply_depots(self, obs, args):
+
+        return
+
+    def perform_zap_brannigan_maneuver(self, obs, args):
+
         return
 
     # whatever it takes to select an available worker scv
@@ -739,17 +805,9 @@ class aBot2Agent(base_agent.BaseAgent):
         self.old_o = o
 
         a = self.builder.get_action(o)
-        if a == 1: # train SCV
-            #print("  Alice Says: train an scv")
-            self.priority_queue.append([4, self.train_scv, {}])
 
-        elif a == 2: # build supply depot
-            #print("  Alice Says: build a supply depot")
-            self.priority_queue.append([4, self.make_supply_depot, {}])
+        self.queue_builder_action(obs, {"action":a})
 
-        else:
-            #print("alice says: do a no_op")
-            pass
         return
 
     # the idea here is to have alice the builder choose the buildings and learn the build orders.
@@ -790,18 +848,7 @@ class aBot2Agent(base_agent.BaseAgent):
             self.old_empire_value = empire_value
             self.old_time = current_time
 
-            if a == 1: # train SCV
-                #print("  Alice Says: train an scv")
-                self.priority_queue.append([4, self.train_scv, {}])
-
-            elif a == 2: # build supply depot
-                #print("  Alice Says: build a supply depot")
-                self.priority_queue.append([4, self.make_supply_depot, {}])
-
-            else:
-                #print("alice says: do a no_op")
-                pass
-
+            self.queue_builder_action(obs, {"action":a})
         return
 
     def finish_alice_the_builder(self):
@@ -814,20 +861,53 @@ class aBot2Agent(base_agent.BaseAgent):
         self.builder.wrap_up_action(o, r, d, _)
         return
 
+    def queue_builder_action(self, obs, args):
+        a = None
+        if "action" in args: a=args["action"]
+        
+        if a == 1: # train SCV
+            #print("  Alice Says: train an scv")
+            self.priority_queue.append([4, self.train_scv, {}])
 
+        elif a == 2: # build supply depot
+            #print("  Alice Says: build a supply depot")
+            self.priority_queue.append([4, self.make_building, {"building":"supply depot"}])
 
-    def schedule_print_data(self, obs, args):
-        #print("hey, let's schedule a printout")
-        current_time = obs.observation["game_loop"][0]
-        # recurring action to print the location of the currently selected building
-        self.schedule_action(obs, current_time + 40, self.schedule_print_data, {})
-        self.schedule_action(obs, current_time + 10, self.print_data, {})
+        elif a == 3: # build barracks
+            #print("  Alice Says: build a supply depot")
+            self.priority_queue.append([4, self.make_building, {"building":"barracks"}])
+
+        elif a == 4: # get SCVs back to work
+            pass
+
+        elif a == 5: # build marine
+            self.priority_queue.append([4, self.train_marine, {}])
+            pass
+
+        elif a == 6: # trigger supply depots
+            self.priority_queue.append([4, self.trigger_supply_depots, {}])
+            pass
+
+        elif a == 7: # attack move across the map
+            self.priority_queue.append([4, self.perform_zap_brannigan_maneuver, {}])
+            pass
+
+        else:
+            #print("alice says: do a no_op")
+            pass
+
         return
 
-    # eventually we need a mode where we collect build order and building location data from a replay.
-    # for now we'll hard code absolute building locations by printing them out and typing them in.
+
+    def schedule_print_data(self, obs, args):       
+        current_time = obs.observation["game_loop"][0]
+        # recurring action to print out some data
+        self.schedule_action(obs, current_time + 80, self.schedule_print_data, {})
+        self.schedule_action(obs, current_time, self.print_data, {})
+        return
+
+    # print out useful data for debugging whatever you're working on
     def print_data(self, obs, args):
-        #print("hey, let's print the location of the selected building")
         single_select = obs.observation["single_select"]
         
         #print(str(obs.observation.keys()))
@@ -863,7 +943,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 ax, ay = map_reader.get_absolute_location(obs, {"point":[x, y],"bot":self})
 
                 #print(f"Selected item at screen: x{x},y{y}")
-                #print(f"Selected item at abs: x{ax},y{ay}")
+                print(f"Selected item at absolute point: x{ax},y{ay}")
             else:
                 #print("nothing is selected")
                 pass
@@ -879,6 +959,16 @@ class aBot2Agent(base_agent.BaseAgent):
         if "type" in args:
             type = args["type"]
 
+        param = "now"
+        if "param" in args:
+            param = args["param"]
+
+        offset = 0
+        
+        for bldg in self.building_dimensions:
+            if bldg["unit id"] == type:
+                offset = bldg["tiles"][0] * self.tile_size[0] / 2
+
         #print("trying to select: " + str(type))
         # Find the pixels that relate to the unit
         unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
@@ -888,10 +978,17 @@ class aBot2Agent(base_agent.BaseAgent):
         #  - On multiple buildings, select the center point of the top left building based on known building dimensions.
         # TODO: if there is no building on screen, check the building tables and go to a minimap location with the building
             
-        # find the center of the pixels relating to command centers
-        if(len(xs) > 0 and len(ys) > 0):
-            x = int(xs.mean())
-            y = int(ys.mean())
+        # find the left most pixel relating to the building
+        if len(xs) > 0:
+            min_x = min(xs)
+            x, y = [min_x,0]
+            for i in range(len(xs)):
+                if xs[i] == min_x: 
+                    y = ys[i]
+                    x = x + offset
+                    break
+
+            if x >= self.screen_dimensions[0]: x = self.screen_dimensions[0] - 1
 
             # queue up an action to click on the center pixel
             self.callback_method = None
@@ -899,9 +996,9 @@ class aBot2Agent(base_agent.BaseAgent):
 
             action = { 
                         "id"    :   static.action_ids["select point"], 
-                        "params":   [[static.params["now"]], [x,y]] 
+                        "params":   [[static.params[param]], [x,y]] 
                      }
-            return action
+            return self.try_perform_action(obs, action)
 
         return None
 

@@ -348,8 +348,7 @@ def calibrate_map_data(obs, args):
     else:
         # command center isn't selected, go ahead and select it. 
         # then, after selecting it, let's do the first part of this if statement
-        to_do = bot.select_building(obs, {"type":static.unit_ids['command center'],"bot":bot})
-        action = bot.try_perform_action(obs, to_do)
+        action = bot.select_building(obs, {"type":static.unit_ids['command center']})
 
         bot.callback_method = calibrate_map_data
         bot.callback_parameters = args
@@ -495,7 +494,7 @@ def plan_chart_expansion(obs, args = {}):
     bot.charting_order = list
     return
 
-# Returns: absolute x/y location of a pixel relative to the starting command center
+# Returns: absolute x/y location of a pixel relative to the starting command center's starting screen
 def get_absolute_location(obs, args={}):
     bot = None
     if "bot" in args:

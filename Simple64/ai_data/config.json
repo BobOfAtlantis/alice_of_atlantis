@@ -9,12 +9,12 @@
     "bot":	null,
     "clip_ratio":	0.2,
     "epoch":	0,
-    "epochs":	3,
+    "epochs":	5,
     "exp_name":	"builder_ai",
     "gamma":	0.99,
     "lam":	0.97,
     "logger":	{
-        "<spinup.utils.logx.EpochLogger object at 0x000001FF33AA3908>":	{
+        "<spinup.utils.logx.EpochLogger object at 0x0000019F6D7269E8>":	{
             "epoch_dict":	{},
             "exp_name":	"builder_ai",
             "first_row":	true,
@@ -37,7 +37,7 @@
     "save_freq":	1,
     "seed":	0,
     "step":	0,
-    "steps_per_epoch":	200,
+    "steps_per_epoch":	1000,
     "target_kl":	0.01,
     "train_pi_iters":	80,
     "train_v_iters":	80,

@@ -9,6 +9,7 @@ params = {
     "vespene":2,
     "supply used":3,
     "supply available":4,
+    "select all": actions.SelectPointAct["select_all_type"]
     }
 
 screen_features = {
@@ -39,11 +40,11 @@ unit_ids = {
     }
 
 unit_cost = {
-        "scv": [50, 0],
-        "marine": [50, 0],
-        "supply depot": [100, 0],
-        "barracks": [150, 0],
-        "command center": [400, 0]
+    "scv": [50, 0],
+    "marine": [50, 0],
+    "supply depot": [100, 0],
+    "barracks": [150, 0],
+    "command center": [400, 0]
     }
 
 action_ids = {
