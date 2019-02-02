@@ -29,7 +29,7 @@ class Builder(object):
         self.actor_critic=core.mlp_actor_critic
         self.ac_kwargs=dict(hidden_sizes=[64]*2)
         self.seed=0 
-        self.steps_per_epoch=1000        
+        self.steps_per_epoch=10000        
         self.epochs=5
         self.gamma=0.99
         self.clip_ratio=0.2

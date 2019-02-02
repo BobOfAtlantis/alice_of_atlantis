@@ -103,12 +103,12 @@ def load_map_data(obs, args = {}):
     return None
 
 def center_screen_on_main(obs, args):
-    print("moving home to main")
+    #print("moving home to main")
     bot = None
     if "bot" in args:
         bot = args["bot"]
 
-    print(f"{bot.minimap_home_base}")
+    #print(f"{bot.minimap_home_base}")
     action = { 
             "id"    :   static.action_ids["move camera"], 
             "params":   [[bot.minimap_home_base[0],bot.minimap_home_base[1]]] 

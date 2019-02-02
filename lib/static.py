@@ -65,5 +65,7 @@ action_ids = {
     "select army": actions.FUNCTIONS.select_army.id,
     "select idle worker": actions.FUNCTIONS.select_idle_worker.id,
     "attack minimap": actions.FUNCTIONS.Attack_minimap.id,
-    "move screen": actions.FUNCTIONS.Move_screen.id
+    "move screen": actions.FUNCTIONS.Move_screen.id,
+    "lower supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Lower_quick.id,
+    "raise supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Lower_quick.id
     }

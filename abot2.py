@@ -628,8 +628,7 @@ class aBot2Agent(base_agent.BaseAgent):
         ctr = ctr + 1
 
         # TODO: check for available minerals, if there aren't enough set it in schedule and return False
-
-        # if a command center is selected, or multiple are selected... let's get right to it, and train an scv
+        # if a barracks is selected, or multiple are selected... let's get right to it
         if static.action_ids["train marine"] in obs.observation["available_actions"]:
             # if the next thing to do isn't to press the build scv button... then try to select a command center again
 
@@ -671,12 +670,136 @@ class aBot2Agent(base_agent.BaseAgent):
 
             
     def trigger_supply_depots(self, obs, args):
+        # have we been here before? are we thrashing?
+        ctr = 0
+        if "ctr" in args:
+            ctr = args["ctr"]
+        ctr = ctr + 1
 
+        # if supply depots are selected, trigger them
+        if static.action_ids["lower supply depot"] in obs.observation["available_actions"]:
+            # if the next thing to do isn't to press the build scv button... then try to select a command center again
+
+            to_do = { "id":static.action_ids["lower supply depot"], 
+                      "params":[ [static.params["now"]] ] 
+                    }
+            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
+
+            self.callback_method = None
+            self.callback_parameters = {}
+            return action
+
+        # if supply depots are selected, trigger them
+        elif static.action_ids["raise supply depot"] in obs.observation["available_actions"]:
+            # if the next thing to do isn't to press the build scv button... then try to select a command center again
+
+            to_do = { "id":static.action_ids["raise supply depot"], 
+                      "params":[ [static.params["now"]] ] 
+                    }
+            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
+
+            self.callback_method = None
+            self.callback_parameters = {}
+            return action
+
+        else: # supply depots not selected, select them
+            if ctr > 5:
+                # this is taking too long, abandon
+                self.callback_parameters = {}
+                self.callback_method = None
+                return
+
+            #TODO:
+            # check the multi select array to see if there are barracks already selected. If so, let's select them and start training marines
+            # check if there are command centers in the production control group (5)
+
+            action = self.select_building(obs, {"type":static.unit_ids['supply depot'], "param":"select all"})
+            if action == None:
+                # There wasn't a barracks on screen, we must move to a barracks
+                self.callback_parameters = {"ctr":ctr}
+                self.callback_method = self.trigger_supply_depots
+                return map_reader.center_screen_on_main(obs, {"bot":self})
+
+            else:
+                self.callback_parameters = {"ctr":ctr}
+                self.callback_method = self.trigger_supply_depots
+                return action
+
+        self.callback_parameters = {}
+        self.callback_method = None
         return
 
-    def perform_zap_brannigan_maneuver(self, obs, args):
+    # select all
+    # control group
+    # attack move
+    def perform_zapp_brannigan_maneuver(self, obs, args):
+        #print("zapp")
+        my_x, my_y = self.command_home_base
 
-        return
+        enemy_ys, enemy_xs = (obs.observation["feature_minimap"][static.screen_features["player relative"]] == static.params["player enemy"]).nonzero()
+
+        center_x = 31
+        center_y = 31
+
+        enemy_x = center_x + center_x - my_x
+        enemy_y = center_y + center_y - my_y
+        
+        if(len(enemy_ys) > 0):
+            enemy_x = enemy_xs[0]
+            enemy_y = enemy_ys[0]
+
+        
+        action = { 
+            "id"    :   static.action_ids["select army"],
+            "params":   [[static.params["now"]]]
+            }
+
+        # if there isn't an army to select, this will come back none... let's not send whatever SCV is selected off to die just yet.
+        zapp = self.try_perform_action(obs, action)
+
+        if zapp is None:
+            return
+        else:
+            self.priority_queue.append([0, self.control_group_selected, {"type":"append", "group":1}])
+            self.priority_queue.append([0, self.a_move, {"point":[enemy_x,enemy_y]}])
+            return zapp
+
+    def a_move(self, obs, args):
+        #print("a_move")
+        point = [0,0]
+        if "point" in args: point = args["point"]
+
+        action = { 
+            "id"    :   static.action_ids["attack minimap"],
+            "params":   [[static.params["now"]],point]
+            }
+
+        self.callback_method = None
+        self.callback_parameters = {}
+
+        return self.try_perform_action(obs, action)
+
+
+    def control_group_selected(self, obs, args):
+        #print("ctrl")
+        type = "append"
+        if "type" in args:type = args["type"]
+
+        group = 9
+        if "group" in args:group = args["group"]
+
+        command_id = [x for x, y in enumerate(actions.CONTROL_GROUP_ACT_OPTIONS) if y[0] == type]
+
+        action = { 
+            "id"    :   static.action_ids["control group"],
+            "params":   [command_id, [group]]
+            }
+
+        self.callback_method = None
+        self.callback_parameters = {}
+
+        return self.try_perform_action(obs, action)
+
 
     # whatever it takes to select an available worker scv
     # this command links back to the calling command if it's in args.
@@ -889,7 +1012,7 @@ class aBot2Agent(base_agent.BaseAgent):
             pass
 
         elif a == 7: # attack move across the map
-            self.priority_queue.append([4, self.perform_zap_brannigan_maneuver, {}])
+            self.priority_queue.append([4, self.perform_zapp_brannigan_maneuver, {}])
             pass
 
         else:
@@ -1005,7 +1128,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
 def main():
     #print(sys.path)
-    os.system('python -m run_agent --map Simple64 --agent abot2.aBot2Agent --agent_race terran --max_agent_steps 0 --game_steps_per_episode 5000')
+    os.system('python -m run_agent --map Simple64 --agent abot2.aBot2Agent --agent_race terran --max_agent_steps 0 --game_steps_per_episode 50000')
 
 if __name__ == "__main__":
     main()
