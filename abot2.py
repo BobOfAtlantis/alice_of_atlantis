@@ -38,6 +38,7 @@ class aBot2Agent(base_agent.BaseAgent):
         super().setup(obs_spec, action_spec)
         self.builder = None
         self.builder_running = False
+        self.reward = 0
         # tensorflow session
         #self.sess = tf.Session()
         
@@ -66,11 +67,13 @@ class aBot2Agent(base_agent.BaseAgent):
     def reset(self):
         super().reset()
         print(f"episode: {self.episodes}")
+        print(f"reward: {self.reward}")
 
         # if there is a builder, we need to close out its last action
         if self.builder is not None and self.builder_running == True:
             #print("game ended, need to clear the buffer")
-            self.finish_alice_the_builder()
+            r = self.reward * 1000
+            self.finish_alice_the_builder(r)
 
         
         # location and building type for pending buildings
@@ -219,8 +222,9 @@ class aBot2Agent(base_agent.BaseAgent):
     # the primary function for pysc2 agents. called each time the game gives access to the bot
     def step(self, obs):
         super().step(obs)
-
-        time.sleep(0.1)
+        self.reward = obs.reward
+        if(self.reward != 0):
+            print(f"reward: {self.reward}")
         
         # what is our absolute game turn index
         # used in qtables and scheduling
@@ -974,11 +978,11 @@ class aBot2Agent(base_agent.BaseAgent):
             self.queue_builder_action(obs, {"action":a})
         return
 
-    def finish_alice_the_builder(self):
+    def finish_alice_the_builder(self, reward):
         self.builder_running = False
         #print("clearing buffer")
         o = self.old_o
-        r = 0 # TODO: need to do a win / loss thing on this if we can get it 
+        r = reward
         d = True
         _ = {}
         self.builder.wrap_up_action(o, r, d, _)
