@@ -18,7 +18,8 @@ screen_features = {
     "selected":features.SCREEN_FEATURES.selected.index,
     "height map":features.SCREEN_FEATURES.height_map.index,
     "visibility map":features.SCREEN_FEATURES.visibility_map.index,
-    "creep":features.SCREEN_FEATURES.creep.index
+    "creep":features.SCREEN_FEATURES.creep.index,
+    "unit hit points ratio":features.SCREEN_FEATURES.unit_hit_points_ratio.index
     }
 
 minimap_features = {
@@ -34,6 +35,7 @@ unit_ids = {
     "scv": units.Terran.SCV,
     "command center": units.Terran.CommandCenter,
     "supply depot": units.Terran.SupplyDepot,
+    "supply depot lowered": units.Terran.SupplyDepotLowered,
     "barracks": units.Terran.Barracks,
     "mineral field": units.Neutral.MineralField,
     "mineral field 750": units.Neutral.MineralField750
@@ -67,5 +69,5 @@ action_ids = {
     "attack minimap": actions.FUNCTIONS.Attack_minimap.id,
     "move screen": actions.FUNCTIONS.Move_screen.id,
     "lower supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Lower_quick.id,
-    "raise supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Lower_quick.id
+    "raise supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Raise_quick.id
     }

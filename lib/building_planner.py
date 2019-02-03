@@ -45,9 +45,12 @@ def load_building_plan(obs, args = {}):
             bot.building_plan["production"] = dict["production"]
 
         if "command" in dict:
-            bot.building_plan["command"] = dict["command"]
-
-
-        print("building plan: " + str(bot.building_plan))
+            command = dict["command"]
+            bot.building_plan["command"] = command
+            
+            # initialize the starting command center as already built.
+            for c in command:
+                if c[0] < 3 and c[1] < 3:
+                    bot.buildings = [{"type":static.unit_ids["command center"],"location":c,"status":"complete","scvs":12}]
 
     return

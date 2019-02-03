@@ -120,11 +120,13 @@ def is_point_on_screen(obs, args):
     bot = None
     if "bot" in args:
         bot = args["bot"]
+    else:return
 
     x, y = 0, 0 
     if "point" in args:
         x,y = args["point"]
-
+    else:return
+    
     width, height = bot.screen_dimensions
     
     mini_x, mini_y = get_minimap_coords(obs, args)
@@ -181,11 +183,8 @@ def get_screen_location(obs, args):
 
     width, height = bot.screen_dimensions
     
-    mini_x, mini_y = get_minimap_coords(obs, args)
-
     # offsets based on minimap location
-    off_x = bot.minimap_offset_chart[1,mini_y,mini_x]
-    off_y = bot.minimap_offset_chart[2,mini_y,mini_x]
+    off_x, off_y = get_offset(obs, args)
 
     screen_left = off_x
     screen_top = off_y
@@ -199,6 +198,30 @@ def get_screen_location(obs, args):
         return None
 
     return [x - screen_left,y - screen_top]
+
+# returns the top left and bottom right pixel of the screen relative to the absolute coords
+def get_relative_screen_location(obs, args):
+    bot = None
+    if "bot" in args:
+        bot = args["bot"]
+
+    tl = get_offset(obs, args)
+
+    br = [tl[0] + bot.screen_dimensions[0],tl[1] + bot.screen_dimensions[1]]
+
+    return [tl, br]
+
+def get_offset(obs, args):
+    bot = None
+    if "bot" in args:
+        bot = args["bot"]
+
+    mini_x, mini_y = get_minimap_coords(obs, args)
+
+    off_x = bot.minimap_offset_chart[1,mini_y,mini_x]
+    off_y = bot.minimap_offset_chart[2,mini_y,mini_x]
+    
+    return [off_x, off_y]
 
 def move_to_point(obs, args):
     bot = None

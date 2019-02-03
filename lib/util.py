@@ -58,3 +58,10 @@ def get_map_folder(obs, args = {}):
         f.close()
 
     return map_name
+
+def get_finances(obs):
+    minerals = obs.observation["player"][1]
+    gas = obs.observation["player"][2]
+
+    return {"minerals":minerals,"gas":gas}
+
