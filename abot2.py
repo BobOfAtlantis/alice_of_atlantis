@@ -227,6 +227,16 @@ class aBot2Agent(base_agent.BaseAgent):
         
         #time.sleep(.5)
 
+        alerts = obs.observation["alerts"]
+        if alerts is not None and len(alerts) > 0:
+            print("Alerts: " + str(alerts))
+
+        #last_act = obs.observation["last_actions"]
+        #if last_act is not None and len(last_act) > 0:
+        #   print("Last Action: " + str(last_act))
+        
+
+
         # what is our absolute game turn index
         # used in qtables and scheduling
         game_loop = obs.observation["game_loop"][0]
@@ -290,6 +300,12 @@ class aBot2Agent(base_agent.BaseAgent):
             self.builder.reset(self.get_builder_state(obs, {}))
         return
 
+    # This is a big old complicated set of machinery:
+    # The intended purpose is to check the buildings that we've ordered against what we can see on the screen.
+    # If "action free" is set to True, then this is done passively with just the buildings available to be seen on the screen
+    # Otherwise, we go through the list of buildings that we've ordered and check up on them all, moving the screen around the minimap until we've hit each building
+    # Also, as we go through buildings, control group them to the appropriate control groups for quick counting and checking far off buildings without moving the screen
+
     # Think about: using control groups to get a quick count of known buildings, will only have to check up on buildings if the don't exist in the control groups
     # 0 = Command and Supply, 5 = Production and Tech
     def building_maintenance(self, obs, args):
@@ -302,9 +318,13 @@ class aBot2Agent(base_agent.BaseAgent):
         # 1 copy the list of buildings to working_list
         working_list = None
         if "working list" in args:
+            # are we already in progress going through the list?
             working_list = args["working list"]
         else:
-            working_list = self.buildings
+            # this must be the first step, let's get a fresh list
+            working_list = self.buildings.copy()
+
+        current_time = obs.observation["game_loop"][0]
 
 
         scr_loc = map_reader.get_relative_screen_location(obs, {"bot":self})
@@ -325,7 +345,7 @@ class aBot2Agent(base_agent.BaseAgent):
             #print("scr_loc: " + str(scr_loc))
 
             if b["status"] == "destroyed":
-                working_list.remove(b) # test this
+                working_list.remove(b) # the building is already marked as destroyed, we don't need to check on it
                 #print("working list: " + str(working_list))
                 #print("bldg: " + str(b))
                 continue
@@ -333,6 +353,8 @@ class aBot2Agent(base_agent.BaseAgent):
             # is b_loc between scr_loc[0] and scr_loc[1]?
             elif(b_loc[0] > scr_loc[0][0] and b_loc[0] < scr_loc[1][0]):
                 if(b_loc[1] > scr_loc[0][1] and b_loc[1] < scr_loc[1][1]):
+                    # the building is on screen, so we don't need to move the screen to check on it.
+                    working_list.remove(b)
                     # bulding is on screen, check up on it
                     #print(str(b))
 
@@ -388,11 +410,13 @@ class aBot2Agent(base_agent.BaseAgent):
                         ys, xs = (b_spot).nonzero()
                         if xs is not None and len(xs) > 15:
                             # there's something in the way of the building, or something weird happening
-                            #print("something is up with the building")
+                            print(f"something is up with the building: {b}")
+                            time.sleep(2)
                             pass
                         else:
                             #print("that building is not there: " + str(xs))
-                            # set the building with that location in the buildings list to destroyed
+                            # it is possible that the building has not yet been placed, if it's under construction or planned
+                            # set the building with that location in the buildings list to destroyed. 
                             
                             for upd_bldg in self.buildings:
                                 if upd_bldg["location"] == b["location"]:
@@ -409,6 +433,7 @@ class aBot2Agent(base_agent.BaseAgent):
                                             upd_bldg["status"] = "failed"
                                     else:
                                         upd_bldg["status"] = "destroyed"
+                                upd_bldg["timestamp"] = current_time
 
                     dmg_spot = scr_dmg[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
 
@@ -434,13 +459,18 @@ class aBot2Agent(base_agent.BaseAgent):
                     if health == 255:
                         for upd_bldg in self.buildings:
                             if upd_bldg["location"] == b["location"]:
+                                upd_bldg["timestamp"] = current_time
+
                                 if upd_bldg["status"] == "under construction" or upd_bldg["status"] == "planned" or upd_bldg["status"] == "damaged":
                                     upd_bldg["status"] = "complete"
                                     upd_bldg["attempt"] = 0
+
                         
                     elif health > 0:
                         for upd_bldg in self.buildings:
                             if upd_bldg["location"] == b["location"]:
+                                upd_bldg["timestamp"] = current_time
+
                                 if upd_bldg["status"] == "planned":
                                     upd_bldg["status"] = "under construction"
                                     upd_bldg["attempt"] = 0
@@ -448,18 +478,43 @@ class aBot2Agent(base_agent.BaseAgent):
                                     upd_bldg["status"] = "damaged"
 
 
+                    # 4 for each visible building that is not a command center, remove it from working_list
+                    
+
             pass
         
         # if we're just observing the current screen without taking any actions, leave now.
         if action_free: return
-        # 3 control group each building type into the correct control group
+
+        # TODO: 3 control group each building type into the correct control group
+        # Keep track of each building type available on screen
+        # Group select each building by building type for each control group
+        # Check through the list to make sure no alien buildings are in the selection.
+        # Control group the selected items into the correct control group
 
 
-        # 4 for each visible building that is not a command center, remove it from working_list
         # 5 for the first command center on the working list, go to the building
         #   Count the scvs on the screen and update the command center status to include them, remove command center from working list
         #   Repeat steps 1-4
+
         # for each remaining building on the working list go to the building and repeat steps 1-4
+        if len(working_list) == 0:return
+        for b in working_list:
+            
+            if "location" in b:
+                loc = b["location"]
+
+                action = map_reader.move_to_point(obs, {"bot":self, "point":loc})
+                if action is None:
+                    continue
+                else:
+                    self.callback_parameters = {"working list": working_list}
+                    self.callback_method = self.building_maintenance
+                    return action
+
+            else: 
+                working_list.remove(b)
+        
 
         return
 
@@ -546,6 +601,7 @@ class aBot2Agent(base_agent.BaseAgent):
     # schedule to have the scv move to build the building
     # schedule to have the scv build the building
     def make_building(self, obs, args):
+        current_time = obs.observation["game_loop"][0]
         building_string = None
         if "building"  in args:
             building_string = args["building"]
@@ -556,8 +612,18 @@ class aBot2Agent(base_agent.BaseAgent):
 
         #print("hey, let's prepare to build our first supply depot")
 
+        # existing or planned buildings of the type we're tring to build
         bldg_types = list(filter(lambda building: building["type"] == static.unit_ids[building_string], self.buildings))
+
+        # places where we can build the building we're trying to build from a config file
         bldg_type_locations = self.building_plan[building_type_string]
+
+        for bt in bldg_types:
+            print("we have: "+ str(bt))
+        if bldg_types is None or len(bldg_types) == 0:
+            print("no buildings found of type: " + building_string)
+            print(self.buildings)
+
 
         #print("supply depots: " + str(supply_depots))
         #print("supply depot locations: " + str(supply_depot_locations))
@@ -565,6 +631,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # find the first supply depot location without a supply depot already in buildings
         location = []
         building = None
+        found_location = False
         for l in bldg_type_locations:
             # check the list of building locations against existing buildings to see if there's an availability
             current_building = list(filter(lambda building: building["location"] == l, bldg_types))
@@ -572,18 +639,24 @@ class aBot2Agent(base_agent.BaseAgent):
             if len(current_building) == 0:
                 # add the building to buildings with status: planned
                 location = l
-                building = {"type":static.unit_ids[building_string],"location":l,"status":"planned"}
+                building = {"type":static.unit_ids[building_string],"location":l,"status":"planned", "timestamp":current_time}
                 self.buildings.append(building)
+                print(f"trying to build a new {building_string} at: {l}")
+                found_location = True
                 break
                 
             elif current_building[0]["status"] == "destroyed" or current_building[0]["status"] == "failed":
+                print(f"trying to replace a {current_building[0]['status']} {building_string} at: {l}")
+
                 # set the status to planned
                 location = l
                 current_building[0]["status"] == "planned"
+                current_building[0]["timestamp"] == current_time
+                found_location = True
                 break
 
         # if there were no available places to build the building, abort
-        if len(location) == 0:
+        if found_location is False:
             #print("error finding a place to build a supply depot")
             self.callback_method = None
             self.callback_parameters = {}
@@ -1177,7 +1250,7 @@ class aBot2Agent(base_agent.BaseAgent):
             pass
 
         elif a == 8: # perform building maintenance
-            self.priority_queue.append([4, self.building_maintenance, {}])
+            self.priority_queue.append([4, self.building_maintenance, {"action free":False}])
             pass
 
         elif a == 9: # not sure yet
@@ -1194,8 +1267,8 @@ class aBot2Agent(base_agent.BaseAgent):
     def schedule_print_data(self, obs, args):       
         current_time = obs.observation["game_loop"][0]
         # recurring action to print out some data
-        self.schedule_action(obs, current_time + 80, self.schedule_print_data, {})
-        self.schedule_action(obs, current_time, self.print_data, {})
+        self.schedule_action(obs, current_time + 100, self.schedule_print_data, {})
+        self.print_data(obs, args)
         return
 
     # print out useful data for debugging whatever you're working on
@@ -1216,7 +1289,10 @@ class aBot2Agent(base_agent.BaseAgent):
             current_time = obs.observation["game_loop"][0]
 
             #print(str(sel))
-
+            buildings = self.buildings
+            for building in buildings:
+                pass
+                #print("Building: " + str(building))
             #print(f"score_by_category: {obs.observation['score_by_category']}")
             #if single_select[0][0] == unit_ids["command center"]:
             #print("Current Game Time: " + str(current_time))

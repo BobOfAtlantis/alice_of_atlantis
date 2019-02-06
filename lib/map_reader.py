@@ -315,7 +315,7 @@ def calibrate_map_data(obs, args):
 
         # save the tile size information
         bot.tile_size = [width/cc_dims['tiles'][0], height/cc_dims['tiles'][1]]
-        print("tile size: " + str(bot.tile_size))
+        #print("tile size: " + str(bot.tile_size))
 
         # get the selected height and width from the minimap
         sel = obs.observation['feature_minimap'][static.minimap_features["selected"]]
@@ -448,7 +448,7 @@ def determine_minimap_boundaries(obs, args={}):
     return None
 
 def schedule_chart_map(obs, args={}):
-    print("yo, let's scan more of the map")
+    #print("yo, let's scan more of the map")
     bot = None
     if "bot" in args:
         bot = args["bot"]
@@ -460,8 +460,8 @@ def schedule_chart_map(obs, args={}):
     if bot.charting_order == None:
         plan_chart_expansion(obs, {"bot":bot})
 
-    print("Remaining Tiles To Chart: " + str(len(bot.charting_order)))
-    print("Tiles: " + str(bot.charting_order[0:6]))
+    #print("Remaining Tiles To Chart: " + str(len(bot.charting_order)))
+    #print("Tiles: " + str(bot.charting_order[0:6]))
 
     if len(bot.charting_order) > 0:
         bot.priority_queue.extend([
@@ -509,10 +509,10 @@ def plan_chart_expansion(obs, args = {}):
                 list.append([dist_x+dist_y,x + min_x,y + min_y]) # adjust list from relative to absolute
 
     list.sort()
-    print("we're going to chart the following!")
+    #print("we're going to chart the following!")
 
-    print(list[0:10])
-    print("list size: " + str(len(list)))
+    #print(list[0:10])
+    #print("list size: " + str(len(list)))
 
     bot.charting_order = list
     return
