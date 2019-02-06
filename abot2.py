@@ -169,7 +169,10 @@ class aBot2Agent(base_agent.BaseAgent):
     building_dimensions = [
             {"unit id":static.unit_ids["command center"], "tiles":[5,5]},
             {"unit id":static.unit_ids["barracks"], "tiles":[3,3]},
-            {"unit id":static.unit_ids["supply depot"], "tiles":[2,2]}
+            {"unit id":static.unit_ids["supply depot"], "tiles":[2,2]},
+            {"unit id":static.unit_ids["supply depot lowered"], "tiles":[2,2]},
+            {"unit id":static.unit_ids["mineral field"], "tiles":[2,1]},
+            {"unit id":static.unit_ids["mineral field 750"], "tiles":[2,1]}
         ]
 
     # how many pixels are on the map
@@ -410,8 +413,8 @@ class aBot2Agent(base_agent.BaseAgent):
                         ys, xs = (b_spot).nonzero()
                         if xs is not None and len(xs) > 15:
                             # there's something in the way of the building, or something weird happening
-                            print(f"something is up with the building: {b}")
-                            time.sleep(2)
+                            #print(f"something is up with the building: {b}")
+                            #time.sleep(2)
                             pass
                         else:
                             #print("that building is not there: " + str(xs))
@@ -437,45 +440,51 @@ class aBot2Agent(base_agent.BaseAgent):
 
                     dmg_spot = scr_dmg[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
 
-                    # check the screen for hp to see how we're doing on that
-                    # take a diagonal through the spot and get any non-zero numbers, what's the avg
-                    ctr = 0
-                    total = 0
-                    for i in range(len(dmg_spot)):
-                        # taking a diagonal of x/y's... but if the building is hanging off the edge of the screen on the right or left, color within the lines
-                        x_var = i
-                        x_var = min(x_var,len(dmg_spot[i])-1)
-                        x_var = max(x_var,0)
-                        if(dmg_spot[i][x_var] > 0):
-                            ctr += 1
-                            total += dmg_spot[i][x_var]
+                    if dmg_spot is None or len(dmg_spot) == 0:
+                        print(f"trying to detect the damage of building: {b} but something is wrong")
+                        # TODO: figure out how we get here.
+                        pass
 
-                    health = 0
-                    if ctr > 0:
-                        health = total / ctr
+                    else:
+                        # check the screen for hp to see how we're doing on that
+                        # take a diagonal through the spot and get any non-zero numbers, what's the avg
+                        ctr = 0
+                        total = 0
+                        for i in range(len(dmg_spot)):
+                            # taking a diagonal of x/y's... but if the building is hanging off the edge of the screen on the right or left, color within the lines
+                            x_var = i
+                            x_var = min(x_var,len(dmg_spot[i])-1)
+                            x_var = max(x_var,0)
+                            if(dmg_spot[i][x_var] > 0):
+                                ctr += 1
+                                total += dmg_spot[i][x_var]
 
-                    #print("health: " + str(health))
-                    # update the building status
-                    if health == 255:
-                        for upd_bldg in self.buildings:
-                            if upd_bldg["location"] == b["location"]:
-                                upd_bldg["timestamp"] = current_time
+                        health = 0
+                        if ctr > 0:
+                            health = total / ctr
 
-                                if upd_bldg["status"] == "under construction" or upd_bldg["status"] == "planned" or upd_bldg["status"] == "damaged":
-                                    upd_bldg["status"] = "complete"
-                                    upd_bldg["attempt"] = 0
+                        #print("health: " + str(health))
+                        # update the building status
+                        if health == 255:
+                            for upd_bldg in self.buildings:
+                                if upd_bldg["location"] == b["location"]:
+                                    upd_bldg["timestamp"] = current_time
+
+                                    if upd_bldg["status"] == "under construction" or upd_bldg["status"] == "planned" or upd_bldg["status"] == "damaged":
+                                        upd_bldg["status"] = "complete"
+                                        upd_bldg["attempt"] = 0
 
                         
-                    elif health > 0:
-                        for upd_bldg in self.buildings:
-                            if upd_bldg["location"] == b["location"]:
-                                upd_bldg["timestamp"] = current_time
+                        elif health > 0:
+                            for upd_bldg in self.buildings:
+                                if upd_bldg["location"] == b["location"]:
+                                    upd_bldg["timestamp"] = current_time
 
-                                if upd_bldg["status"] == "planned":
-                                    upd_bldg["status"] = "under construction"
-                                    upd_bldg["attempt"] = 0
-                                if upd_bldg["status"] == "complete":
-                                    upd_bldg["status"] = "damaged"
+                                    if upd_bldg["status"] == "planned":
+                                        upd_bldg["status"] = "under construction"
+                                        upd_bldg["attempt"] = 0
+                                    if upd_bldg["status"] == "complete":
+                                        upd_bldg["status"] = "damaged"
 
 
                     # 4 for each visible building that is not a command center, remove it from working_list
@@ -619,7 +628,8 @@ class aBot2Agent(base_agent.BaseAgent):
         bldg_type_locations = self.building_plan[building_type_string]
 
         for bt in bldg_types:
-            print("we have: "+ str(bt))
+            #print("we have: "+ str(bt))
+            pass
         if bldg_types is None or len(bldg_types) == 0:
             print("no buildings found of type: " + building_string)
             print(self.buildings)
@@ -641,12 +651,12 @@ class aBot2Agent(base_agent.BaseAgent):
                 location = l
                 building = {"type":static.unit_ids[building_string],"location":l,"status":"planned", "timestamp":current_time}
                 self.buildings.append(building)
-                print(f"trying to build a new {building_string} at: {l}")
+                #print(f"trying to build a new {building_string} at: {l}")
                 found_location = True
                 break
                 
             elif current_building[0]["status"] == "destroyed" or current_building[0]["status"] == "failed":
-                print(f"trying to replace a {current_building[0]['status']} {building_string} at: {l}")
+                #print(f"trying to replace a {current_building[0]['status']} {building_string} at: {l}")
 
                 # set the status to planned
                 location = l
@@ -1035,6 +1045,91 @@ class aBot2Agent(base_agent.BaseAgent):
 
         return self.try_perform_action(obs, action)
 
+    def make_scv_work(self, obs, args):
+        print("ya'll get back to work now, ya hear?")
+        single_select = obs.observation["single_select"]
+        scv = None
+        if len(single_select) > 0:
+            if single_select[0][0] == static.unit_ids["scv"]:
+                scv = single_select[0]
+
+        if scv is None:
+            multi_select = obs.observation["multi_select"]
+            if multi_select is not None and len(multi_select) > 0:
+                print("haven't tested this yet, getting an scv from a multiselect")
+
+                for i in range(len(multi_select)):
+                    ms = multi_select[i]
+
+                    if ms[0] == static.unit_ids["scv"]: 
+                        command_id = [x for x, y in enumerate(actions.SELECT_UNIT_ACT_OPTIONS) if y[0] == "select"]
+
+                        action = {
+                            "id"    :   static.action_ids["select unit"],
+                            "params":   [[command_id], [i]]
+                        }
+
+                        do_action = self.try_perform_action(obs, action)
+
+                        self.callback_method = self.make_scv_work
+                        self.callback_parameters = args
+
+                        return do_action
+
+        if scv is not None:
+            # ok, we have an scv, let's get it back to work.
+            print("we have an scv, command it to work!")
+            available_actions = obs.observation["available_actions"]
+            print("available actions: " + str(available_actions))
+            if static.action_ids["harvest return"] in available_actions:
+                print("harvest return is available, do it")
+                action = { 
+                    "id"    :   static.action_ids["harvest return"],
+                    "params":   [[static.params["queued"]]]
+                }
+
+                do_action = self.try_perform_action(obs, action)
+
+                self.callback_method = None
+                self.callback_parameters = {}
+                return do_action
+
+            else:
+                print("harvest return wasn't available, let's find a mineral patch to go to")
+
+
+
+                self.callback_method = None
+                self.callback_parameters = {}
+                return
+
+
+
+
+
+                        
+        idle_workers = obs.observation["player"].idle_worker_count
+        if idle_workers > 0:
+            
+            select_id = [x for x, y in enumerate(actions.SELECT_WORKER_OPTIONS) if y[0] == 'select']
+            action = { 
+                "id"    :   static.action_ids["select idle worker"],
+                "params":   [select_id]
+                }
+
+            # need to get idle worker!
+            #print("hey, this is broken!")
+            #action = actions.FUNCTIONS.select_idle_worker('select')       
+            
+            # let's come back to make sure we've gotten an SCV
+            self.callback_method = self.make_scv_work
+            self.callback_parameters = args
+
+            return self.try_perform_action(obs, action)
+
+        
+
+
     # whatever it takes to select an available worker scv
     # this command links back to the calling command if it's in args.
     def get_scv(self, obs, args):
@@ -1235,6 +1330,7 @@ class aBot2Agent(base_agent.BaseAgent):
             self.priority_queue.append([4, self.make_building, {"building":"barracks"}])
 
         elif a == 4: # get SCVs back to work
+            self.priority_queue.append([4, self.make_scv_work, {}])
             pass
 
         elif a == 5: # build marine

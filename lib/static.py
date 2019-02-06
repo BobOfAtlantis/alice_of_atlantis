@@ -69,5 +69,6 @@ action_ids = {
     "attack minimap": actions.FUNCTIONS.Attack_minimap.id,
     "move screen": actions.FUNCTIONS.Move_screen.id,
     "lower supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Lower_quick.id,
-    "raise supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Raise_quick.id
+    "raise supply depot": actions.FUNCTIONS.Morph_SupplyDepot_Raise_quick.id,
+    "select unit": actions.FUNCTIONS.select_unit.id # selects a unit from a multi-select
     }
