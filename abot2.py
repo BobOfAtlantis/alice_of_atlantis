@@ -812,8 +812,8 @@ class aBot2Agent(base_agent.BaseAgent):
                     print("error, the desired location isn't on screen something went wrong")
 
                 action = { 
-                            "id"     :   build_action, 
-                            "params" :   [[static.params["queued"]], screen_location] 
+                            "id":       build_action,
+                            "params":   [[static.params["queued"]], screen_location]
                          }
                 ret = self.try_perform_action(obs, action)
 

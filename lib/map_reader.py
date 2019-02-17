@@ -119,6 +119,7 @@ def center_screen_on_main(obs, args):
         }
     return bot.try_perform_action(obs, action)
 
+
 # point is relative to main base center, figure out if it's currently on the screen
 def is_point_on_screen(obs, args):
     bot = None
@@ -138,8 +139,7 @@ def is_point_on_screen(obs, args):
     mini_x, mini_y = get_minimap_coords(obs, args)
 
     # offsets based on minimap location
-    off_x = bot.minimap_offset_chart[1, mini_y, mini_x]
-    off_y = bot.minimap_offset_chart[2, mini_y, mini_x]
+    off_x, off_y = get_offset(obs, args)
 
     screen_left = off_x
     screen_top = off_y
@@ -187,7 +187,7 @@ def get_screen_location(obs, args):
 
     x, y = 0, 0
     if "point" in args:
-        x,y = args["point"]
+        x, y = args["point"]
 
     width, height = bot.screen_dimensions
     
@@ -199,13 +199,14 @@ def get_screen_location(obs, args):
     screen_right = off_x + width
     screen_bottom = off_y + height
 
-    if(x <= screen_left or x >= screen_right):
+    if x <= screen_left or x >= screen_right:
         return None
 
-    if(y <= screen_top or y >= screen_bottom):
+    if y <= screen_top or y >= screen_bottom:
         return None
 
-    return [x - screen_left,y - screen_top]
+    return [x - screen_left, y - screen_top]
+
 
 # returns the top left and bottom right pixel of the screen relative to the absolute coords
 def get_relative_screen_location(obs, args):
@@ -218,6 +219,7 @@ def get_relative_screen_location(obs, args):
     br = [tl[0] + bot.screen_dimensions[0],tl[1] + bot.screen_dimensions[1]]
 
     return [tl, br]
+
 
 def get_offset(obs, args):
     bot = None
@@ -243,11 +245,9 @@ def get_offset(obs, args):
     screen_heights = obs.observation['feature_screen'][static.screen_features["height map"]]
     offset_heights = bot.screen_height_chart[0, chunk_y0:chunk_y1,chunk_x0:chunk_x1]
 
-    #print(f"screen_heights shape {screen_heights.shape} offset_heights shape {offset_heights.shape}")
-    #print(f"do they equal? {np.array_equal(screen_heights, offset_heights)}")
-    #print(f"I need information: {chunk_x0},{chunk_y0},{chunk_y0},{chunk_y1}")
-
-
+    # print(f"screen_heights shape {screen_heights.shape} offset_heights shape {offset_heights.shape}")
+    # print(f"do they equal? {np.array_equal(screen_heights, offset_heights)}")
+    # print(f"I need information: {chunk_x0},{chunk_y0},{chunk_y0},{chunk_y1}")
 
     if np.array_equal(screen_heights, offset_heights):
         return [off_x, off_y]
