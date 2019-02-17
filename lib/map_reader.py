@@ -124,33 +124,36 @@ def is_point_on_screen(obs, args):
     bot = None
     if "bot" in args:
         bot = args["bot"]
-    else:return
+    else:
+        return
 
     x, y = 0, 0 
     if "point" in args:
-        x,y = args["point"]
-    else:return
+        x, y = args["point"]
+    else:
+        return
     
     width, height = bot.screen_dimensions
     
     mini_x, mini_y = get_minimap_coords(obs, args)
 
     # offsets based on minimap location
-    off_x = bot.minimap_offset_chart[1,mini_y,mini_x]
-    off_y = bot.minimap_offset_chart[2,mini_y,mini_x]
+    off_x = bot.minimap_offset_chart[1, mini_y, mini_x]
+    off_y = bot.minimap_offset_chart[2, mini_y, mini_x]
 
     screen_left = off_x
     screen_top = off_y
     screen_right = off_x + width
     screen_bottom = off_y + height
 
-    if(x <= screen_left or x >= screen_right):
+    if x <= screen_left or x >= screen_right:
         return False
 
-    if(y <= screen_top or y >= screen_bottom):
+    if y <= screen_top or y >= screen_bottom:
         return False
 
     return True
+
 
 # point is relative to main base center, figure out if it's currently on the screen
 def issue_move_action_on_screen(obs, args):
@@ -165,14 +168,15 @@ def issue_move_action_on_screen(obs, args):
         return None
 
     action = { 
-        "id"    :   static.action_ids["move screen"], 
-        "params":   [[static.params["now"]],screen_location]
+        "id":       static.action_ids["move screen"],
+        "params":   [[static.params["now"]], screen_location]
         }
 
     bot.callback_method = None
     bot.callback_parameters = {}
                          
     return bot.try_perform_action(obs, action)
+
 
 # returns the screen location of an absolute location ("point")
 # returns none if there is no location.

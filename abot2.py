@@ -614,7 +614,7 @@ class aBot2Agent(base_agent.BaseAgent):
     def make_building(self, obs, args):
         current_time = obs.observation["game_loop"][0]
         building_string = None
-        if "building"  in args:
+        if "building" in args:
             building_string = args["building"]
 
         building_type_string = None
@@ -637,8 +637,8 @@ class aBot2Agent(base_agent.BaseAgent):
             print(self.buildings)
 
 
-        #print("supply depots: " + str(supply_depots))
-        #print("supply depot locations: " + str(supply_depot_locations))
+        # print("supply depots: " + str(supply_depots))
+        # print("supply depot locations: " + str(supply_depot_locations))
         
         # find the first supply depot location without a supply depot already in buildings
         location = []
@@ -646,33 +646,38 @@ class aBot2Agent(base_agent.BaseAgent):
         found_location = False
         for l in bldg_type_locations:
             # check the list of building locations against existing buildings to see if there's an availability
-            current_building = list(filter(lambda building: building["location"] == l, bldg_types))
-            #print("making a bldg: " + str(current_building))
-            if len(current_building) == 0:
+            current_building_list = list(filter(lambda bldg: bldg["location"] == l, bldg_types))
+            # print("making a bldg: " + str(current_building))
+            if len(current_building_list) == 0:
                 # add the building to buildings with status: planned
                 location = l
-                building = {"type":static.unit_ids[building_string],"location":l,"status":"planned", "timestamp":current_time}
+                building = {"type": static.unit_ids[building_string],
+                            "location": l,
+                            "status": "planned",
+                            "timestamp": current_time}
                 self.buildings.append(building)
-                #print(f"trying to build a new {building_string} at: {l}")
+                # print(f"trying to build a new {building_string} at: {l}")
                 found_location = True
                 break
-                
-            elif current_building[0]["status"] == "destroyed" or current_building[0]["status"] == "failed":
-                #print(f"trying to replace a {current_building[0]['status']} {building_string} at: {l}")
+            else:
+                current_building = current_building_list[0]
 
-                # set the status to planned
-                location = l
-                current_building[0]["status"] == "planned"
-                current_building[0]["timestamp"] == current_time
-                found_location = True
-                break
+                if current_building["status"] == "destroyed" or current_building["status"] == "failed":
+                    # print(f"trying to replace a {current_building[0]['status']} {building_string} at: {l}")
+
+                    # set the status to planned
+                    location = l
+                    current_building["status"] == "planned"
+                    current_building["timestamp"] == current_time
+                    building = current_building
+                    found_location = True
+                    break
 
         # if there were no available places to build the building, abort
         if found_location is False:
-            #print("error finding a place to build a supply depot")
+            # print("error finding a place to build a supply depot")
             self.callback_method = None
             self.callback_parameters = {}
-
             return
 
         # schedule an scv move to the location of the building location
@@ -682,17 +687,21 @@ class aBot2Agent(base_agent.BaseAgent):
         unit_cost = static.unit_cost[building_string]
 
         # only need to do this when poor.
-        if(finance["minerals"] < unit_cost[0] or finance["gas"] < unit_cost[1]):
+        if finance["minerals"] < unit_cost[0] or finance["gas"] < unit_cost[1]:
             # TODO: need to have a method to set this time correctly based on distance to location from the selected SCV
-            self.schedule_action(obs, current_time + 140, self.construct_building, {"building":building, "schedule":True})
+            print("args check3: " + str(building))
+            self.schedule_action(obs, current_time + 140,
+                                 self.construct_building,
+                                 {"building": building, "schedule": True})
             # schedule the building of the building at location with the scv on location
             self.callback_method = None
             self.callback_parameters = {}
-            return self.move_scv_to_location(obs, {"location":location,"building":building, "schedule":False})
+            return self.move_scv_to_location(obs, {"location": location, "building": building, "schedule": False})
         else:
+            print("args check4: " + str(building))
             self.callback_method = None
             self.callback_parameters = {}
-            return self.construct_building(obs, {"building":building, "schedule":False})
+            return self.construct_building(obs, {"building": building, "schedule": False})
 
         self.callback_method = None
         self.callback_parameters = {}
@@ -758,6 +767,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # if we're coming from a schedule, we have to pop this item onto the queue.
         if "schedule" in args and args["schedule"]:
             args["schedule"] = False
+            print("checking construct_building args: " + str(args))
             self.priority_queue.append([4, self.construct_building, args])
             return
 
@@ -765,7 +775,7 @@ class aBot2Agent(base_agent.BaseAgent):
         if "building" in args:
             building = args["building"]
         
-        if building == None:
+        if building is None:
             # TODO: why are we showing up here
             print("what are you trying to build?")
             print(str(args))
@@ -775,9 +785,11 @@ class aBot2Agent(base_agent.BaseAgent):
         # move the screen to the building location
         # we should have an SCV by now, let's move him to the right place.
         # move the screen to the right place.
-        
-        if map_reader.is_point_on_screen(obs, {"bot":self, "point":building["location"]}):
-            #self.priority_queue.append([1, self.add_to_group, {"group":"builders"}])
+
+        print("building checkup: " + str(building))
+        print("what type is location: " + str(type(building['location'])))
+        if map_reader.is_point_on_screen(obs, {"bot": self, "point": building["location"]}):
+            # self.priority_queue.append([1, self.add_to_group, {"group":"builders"}])
             
             # is an scv selected?
             single_select = obs.observation["single_select"]
@@ -793,7 +805,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 elif building["type"] == static.unit_ids["command center"]:
                     build_action = static.action_ids["build command center"]
 
-                screen_location = map_reader.get_screen_location(obs, {"bot":self, "point":building["location"]})
+                screen_location = map_reader.get_screen_location(obs, {"bot": self, "point": building["location"]})
 
                 if screen_location is None:
                     # the location isn't on screen, this is a problem.
@@ -811,27 +823,29 @@ class aBot2Agent(base_agent.BaseAgent):
                     current_time = obs.observation["game_loop"][0]
 
                     # schedule the building of the building at location with the scv on location
-                    # TODO: need to have a method to set this time correctly based on distance to location from the selected SCV
-                    self.schedule_action(obs, current_time + 16, self.construct_building, {"building":building, "schedule":True})
+                    # TODO: need to have a method to set this time correctly based on walk distance to location
+                    self.schedule_action(obs, current_time + 16,
+                                         self.construct_building,
+                                         {"building": building, "schedule": True})
                 else:
                     building["status"] = "under construction"
                     return ret
 
-
-
             else:
                 # TODO: check if the building has a builder assigned to it with a control group
+                print("args check: " + str(args))
                 self.priority_queue.append([1, self.construct_building, args])
                 # check the building location for an scv
-                return self.get_scv(obs, {"location":building["location"]})
+                return self.get_scv(obs, {"location": building["location"]})
             
-            #return map_reader.issue_move_action_on_screen(obs, {"bot":self, "point":location})
+            # return map_reader.issue_move_action_on_screen(obs, {"bot":self, "point":location})
             pass
         else:
             # move the screen to where it needs to be, then come back here
             location = building["location"]
+            print("args check2: " + str(args))
             self.priority_queue.append([1, self.construct_building, args])
-            return map_reader.move_to_point(obs, {"bot":self, "point":location})
+            return map_reader.move_to_point(obs, {"bot": self, "point": location})
 
         # check the builder control group for an scv
         # get an scv
@@ -840,7 +854,6 @@ class aBot2Agent(base_agent.BaseAgent):
         self.callback_method = None
         self.callback_parameters = {}
         return
-
 
     def train_marine(self, obs, args):
         # have we been here before? are we thrashing?
