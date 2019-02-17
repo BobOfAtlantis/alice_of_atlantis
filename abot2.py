@@ -440,14 +440,16 @@ class aBot2Agent(base_agent.BaseAgent):
 
                     dmg_spot = scr_dmg[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
 
-                    if dmg_spot is None or len(dmg_spot) == 0:
+                    if dmg_spot is None or len(dmg_spot) == 0 or len(dmg_spot[0]) == 0:
                         print(f"trying to detect the damage of building: {b} but something is wrong")
-                        # TODO: figure out how we get here.
+                        # TODO: figure out how we get here. I think it has to do with the screen being moved outside of a minimap click
                         pass
 
                     else:
                         # check the screen for hp to see how we're doing on that
                         # take a diagonal through the spot and get any non-zero numbers, what's the avg
+                        # potential bug around the shape of dmg_spot
+                        print("Shape of the building array" + (str(dmg_spot.shape)))
                         ctr = 0
                         total = 0
                         for i in range(len(dmg_spot)):
@@ -766,6 +768,7 @@ class aBot2Agent(base_agent.BaseAgent):
         if building == None:
             # TODO: why are we showing up here
             print("what are you trying to build?")
+            print(str(args))
             return
         # TODO: check that we have the shekels
 
@@ -1066,7 +1069,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
                         action = {
                             "id"    :   static.action_ids["select unit"],
-                            "params":   [[command_id], [i]]
+                            "params":   [command_id, [i]]
                         }
 
                         do_action = self.try_perform_action(obs, action)

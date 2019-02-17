@@ -1,3 +1,7 @@
+# responsible for many map reading functions, mostly this file uses the height map data visible on the screen
+# to chart out (record it to file) the whole map, then reference to determine where exactly on the map the bot is.
+# this helps with precision for building placement and unit movement.
+
 import hashlib
 import json
 import math
@@ -220,8 +224,100 @@ def get_offset(obs, args):
 
     off_x = bot.minimap_offset_chart[1,mini_y,mini_x]
     off_y = bot.minimap_offset_chart[2,mini_y,mini_x]
-    
-    return [off_x, off_y]
+
+    width, height = bot.screen_dimensions
+
+    global_offset_x = bot.screen_height_chart_offset[0]
+    global_offset_y = bot.screen_height_chart_offset[1]
+
+    chunk_x0 = int(off_x - global_offset_x)
+    chunk_y0 = int(off_y - global_offset_y)
+
+    chunk_x1 = int(chunk_x0 + width)
+    chunk_y1 = int(chunk_y0 + height)
+    # TODO: need to sharpen this in case screen moved in a way other than clicking on the minimap
+    screen_heights = obs.observation['feature_screen'][static.screen_features["height map"]]
+    offset_heights = bot.screen_height_chart[0, chunk_y0:chunk_y1,chunk_x0:chunk_x1]
+
+    #print(f"screen_heights shape {screen_heights.shape} offset_heights shape {offset_heights.shape}")
+    #print(f"do they equal? {np.array_equal(screen_heights, offset_heights)}")
+    #print(f"I need information: {chunk_x0},{chunk_y0},{chunk_y0},{chunk_y1}")
+
+
+
+    if np.array_equal(screen_heights, offset_heights):
+        return [off_x, off_y]
+    else:
+        # TODO: check neighboring screen_height_chart groups against the current screen
+        print("Is screen aligned? FALSE!")
+        print(f"I need information: {chunk_x0},{chunk_x1},{chunk_y0},{chunk_y1}")
+        shift = match_screens(screen_heights, offset_heights, [0,0])
+        off_x = off_x + shift[0]
+        off_y = off_y + shift[1]
+
+        return [off_x, off_y]
+
+
+# how do we have to shift screen 1 to make it match screen 2?
+# recursively check screen 1 vs screen 2,
+#   ^^^^^
+#   <^^^>
+#   <<+>>
+#   <vvv>
+#   vvvvv
+#
+#   If point.x > 0 don't check left
+#   If point.x < 0 don't check right
+#   If point.y > 0 don't check up
+#   If point.y < 0 don't check down
+
+def match_screens(screen1, screen2, shift):
+    x = shift[0]
+    y = shift[1]
+    if np.array_equal(screen1, screen2):
+        print("successfully recursively matched screnes the shift is: "+ str(shift))
+        return shift
+    elif abs(x) > 20 or abs(y) > 20: # haven't thought too much about the constant here, lot's of work to search a square
+        return None
+    else:
+        # if x < 0 don't check right
+        # if abs(y) > abs(x) don't go left or right
+        if(x >= 0) and abs(y) <= abs(x):
+            # TODO: crop screens correctly by cutting off the right side of screen1 and the left side of screen2
+            screen1_copy = np.copy(screen1[0:len(screen1),0:len(screen1[0]) - 1])
+            screen2_copy = np.copy(screen2[0:len(screen2),1:len(screen2[0])])
+            point = match_screens(screen1_copy, screen2_copy, [shift[0]+1,shift[1]])
+            if point is not None:
+                return point
+
+        # if x > 0 don't check left
+        # if abs(y) > abs(x) don't go left or right
+        if(x <= 0) and abs(y) <= abs(x):
+            # TODO: crop screens correctly by cutting off the left side of screen1 and the right side of screen2
+            screen1_copy = np.copy(screen1[0:len(screen1),1:len(screen1[0])])
+            screen2_copy = np.copy(screen2[0:len(screen2),0:len(screen2[0]) - 1])
+            point = match_screens(screen1_copy, screen2_copy, [shift[0]-1,shift[1]])
+            if point is not None:
+                return point
+
+        # if y < 0 don't check down
+        # if abs(x) > abs(y) + 1 don't go up or down
+        if(y >= 0) and abs(x) <= abs(y) + 1:
+            # TODO: crop screens correctly by cutting off the bottom side of screen1 and the top side of screen2
+            screen1_copy = np.copy(screen1[0:len(screen1)-1,0:len(screen1[0])])
+            screen2_copy = np.copy(screen2[1:len(screen2),0:len(screen2[0])])
+            point = match_screens(screen1_copy, screen2_copy, [shift[0],shift[1]+1])
+            if point is not None:
+                return point
+
+        if(y <= 0) and abs(x) <= abs(y) + 1:
+            # TODO: crop screens correctly by cutting off the top side of screen1 and the bottom side of screen2
+            screen1_copy = np.copy(screen1[1:len(screen1),0:len(screen1[0])])
+            screen2_copy = np.copy(screen2[0:len(screen2)-1,0:len(screen2[0])])
+            point = match_screens(screen1_copy, screen2_copy, [shift[0],shift[1]-1])
+            if point is not None:
+                return point
+
 
 def move_to_point(obs, args):
     bot = None
@@ -738,16 +834,18 @@ def update_height_chart(obs, args = {}):
         cam_y = util.round(cam_ys.mean())
 
         new_height_data = obs.observation['feature_screen'][static.screen_features["height map"]]
+
         # save a copy for after the compare
         new_height_copy = new_height_data[0:np.shape(new_height_data)[0],0:np.shape(new_height_data)[1]]
         #print("scr heights: " + str(new_height_data))
 
         if bot.minimap_offset_chart[0,y,x-1] == 1:
             # ok, time to scan in from the left. 
-            print("scanning from the left")
+            #print("scanning from the left")
             # load the old_height_data from the screen_height_chart for the correct spot
             # the we need an 84x84 height chunk from screen_height_chart
             # the top left pixel of the chunk is minimap_offset_chart[1,point[0]-1,point[0]] - screen_height_chart_offset
+
             chart_offset_x = bot.minimap_offset_chart[1,y,x-1]
             chart_offset_y = bot.minimap_offset_chart[2,y,x-1]
             global_offset_x = bot.screen_height_chart_offset[0]
@@ -758,13 +856,12 @@ def update_height_chart(obs, args = {}):
 
             chunk_x1 = int(chunk_x0 + bot.screen_dimensions[0])
             chunk_y1 = int(chunk_y0 + bot.screen_dimensions[1])
-
-            print(str(np.shape(bot.screen_height_chart)))
-            print(f"getting data for {chunk_x0}:{chunk_x1},{chunk_y0}:{chunk_y1}")
+            #print(str(np.shape(bot.screen_height_chart)))
+            #print(f"getting data for {chunk_x0}:{chunk_x1},{chunk_y0}:{chunk_y1}")
 
             old_height_chunk = bot.screen_height_chart[0,chunk_y0:chunk_y1,chunk_x0:chunk_x1]
-            print("old height chunk")
-            print(str(np.shape(old_height_chunk)))
+            #print("old height chunk")
+            #print(str(np.shape(old_height_chunk)))
             #print(old_height_chunk[30:54,30:54])
 
             for i in range(30):
