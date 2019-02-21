@@ -4,51 +4,65 @@
 # - The bot moves the screen by clicking on the minimap through the pysc2 pixel choice interface. 
 #   If the screen is moved in any other way, building locations will be off, and wall offs etc will fail. 
 # - When plotting building locations in the config files, currently the way to do it is to turn off the builder ai,
-#   Hand build the building, then have the game print out the building's location. SCV's or neighboring buildings will throw this off
-# - The first times the bot sees a map it'll look like it's going nuts as it scans the height charts of the map and saves the map to file
+#   Hand build the building, then have the game print out the building's location.
+#   SCVs or neighboring buildings will throw this off
+# - The first times the bot sees a map it'll look like it's going nuts as it scans the height charts of
+#   the map and saves the map to file
 #   This gives it x,y coords for each minimap location so that it can build buildings in the right spots.
-# - The PPO algorithm builder_ai (also alice_the_builder) is for build timings for buildings and units... still a lot of work to be done here.
+# - The PPO algorithm builder_ai (also alice_the_builder) is for build timings for buildings and units...
+#   still a lot of work to be done here.
 
-from decimal import Decimal
-import hashlib
-import json
-import math
 import os
 import os.path
-import sys
-import time
+# import time
 
-import tensorflow as tf
 import numpy as np
-import pandas as pd
 
 from alice.lib import map_reader, building_planner, static, util, builder_ai
 
 
 from pysc2.agents import base_agent
-from pysc2.lib import actions, features, units
+from pysc2.lib import actions  # features, units
 
 np.set_printoptions(threshold=10000)
 
 class aBot2Agent(base_agent.BaseAgent):
     def __init__(self):
         super().__init__()
-        
+        self.builder = None
+        self.builder_running = False
+        self.reward = 0
+
+        # screen dimensions in pixels (for the simple64 map it's 84x84)
+        self.screen_dimensions = None
+
+        # minimap dimensions in minimap pixels for the simple64 map it's 64x64)
+        self.minimap_dimensions = None
+
+        self.building_plan = {}
+
+        self.alert_queue = []
+
+        self.callback_method = None
+        self.callback_parameters = {}
+
+        self.idle_scv_locations = []
+        self.priority_queue = []
+        self.schedule = []
+
     def setup(self, obs_spec, action_spec):
         super().setup(obs_spec, action_spec)
         self.builder = None
         self.builder_running = False
         self.reward = 0
-        # tensorflow session
-        #self.sess = tf.Session()
-        
+
         # features: step, minerals, score
         # actions: build_scv, build_supply_depot, no_op
 
-        #self.builder_actor = Actor(self.sess, n_features=3, lr=0.005, action_bound=[0, 3])
-        #self.builder_critic = Critic(self.sess, n_features=3, lr=0.01)
+        # self.builder_actor = Actor(self.sess, n_features=3, lr=0.005, action_bound=[0, 3])
+        # self.builder_critic = Critic(self.sess, n_features=3, lr=0.01)
 
-        #self.sess.run(tf.global_variables_initializer())
+        # self.sess.run(tf.global_variables_initializer())
 
         # screen dimensions in pixels (for the simple64 map it's 84x84)
         self.screen_dimensions = [obs_spec["feature_screen"][1],obs_spec["feature_screen"][2]]
@@ -56,13 +70,27 @@ class aBot2Agent(base_agent.BaseAgent):
         # minimap dimensions in minimap pixels for the simple64 map it's 64x64)
         self.minimap_dimensions = [obs_spec["feature_minimap"][1],obs_spec["feature_minimap"][2]]
 
-
-
-        #print(f"obs_spec: {obs_spec}")
-        #obs_spec: {'action_result': (0,), 'alerts': (0,), 'available_actions': (0,), 'build_queue': (0, 7), 'cargo': (0, 7), 'cargo_slots_available': (1,), 
-        #'control_groups': (10, 2), 'game_loop': (1,), 'last_actions': (0,), 'multi_select': (0, 7), 'player': (11,), 'score_cumulative': (13,), 
-        #'score_by_category': (11, 5), 'score_by_vital': (3, 3), 'single_select': (0, 7), 'feature_screen': (17, 84, 84), 'feature_minimap': (7, 64, 64), 
-        #'feature_units': (0, 28), 'camera_position': (2,)} 
+        # print(f"obs_spec: {obs_spec}")
+        # obs_spec: {
+        # 'action_result': (0,),
+        # 'alerts': (0,),
+        # 'available_actions': (0,),
+        # 'build_queue': (0, 7),
+        # 'cargo': (0, 7),
+        # 'cargo_slots_available': (1,),
+        # 'control_groups': (10, 2),
+        # 'game_loop': (1,),
+        # 'last_actions': (0,),
+        # 'multi_select': (0, 7),
+        # 'player': (11,),
+        # 'score_cumulative': (13,),
+        # 'score_by_category': (11, 5),
+        # 'score_by_vital': (3, 3),
+        # 'single_select': (0, 7),
+        # 'feature_screen': (17, 84, 84),
+        # 'feature_minimap': (7, 64, 64),
+        # 'feature_units': (0, 28),
+        # 'camera_position': (2,)}
 
     def reset(self):
         super().reset()
@@ -70,26 +98,27 @@ class aBot2Agent(base_agent.BaseAgent):
         print(f"reward: {self.reward}")
 
         # if there is a builder, we need to close out its last action
-        if self.builder is not None and self.builder_running == True:
-            #print("game ended, need to clear the buffer")
+        if self.builder is not None and self.builder_running is True:
+            # print("game ended, need to clear the buffer")
             r = self.reward * 1000
             self.finish_alice_the_builder(r)
 
-        
         # location and building type for pending buildings
         # locations are relative to starting base 
         # status includes attempt number, result of last information etc
         # {"building type":bt, "builder control group": bcg, "location": [x,y], "status": state}
         self.building_plan = {}
 
-        # whenever obs sends us an alert about the game. We can't handle it immediately if we have a callback to do, but we should check it out after that
+        # whenever obs sends us an alert about the game.
+        # We can't handle it immediately if we have a callback to do, but we should check it out after that
         self.alert_queue = []
 
-        # the reason not to have a callback list, is because the logic tree branches too often. If a check fails, you must try again, not move on to the next step.
+        # the reason not to have a callback list, is because the logic tree branches too often.
+        # If a check fails, you must try again, not move on to the next step.
         self.callback_method = None
         self.callback_parameters = {}
 
-        # a list of last known locations of SCVs waiting to build things
+        # a list of last known locations of SCVs waiting to build things or having built things
         self.idle_scv_locations = []
 
         # a list of high priority actions that must be done before the schedule is checked
@@ -101,11 +130,6 @@ class aBot2Agent(base_agent.BaseAgent):
         # [[100,self.build_supply_depot,{}]]
         self.schedule = []
 
-        #self.alice_thebuilder_s = None
-        #self.alice_thebuilder_a = None
-
-
-
     def try_callback(self, obs):
         if self.callback_method is None:
             self.callback_parameters = None
@@ -114,27 +138,29 @@ class aBot2Agent(base_agent.BaseAgent):
             return self.callback_method(obs, self.callback_parameters)
 
     def perform_priority_action(self, obs):
-        if(len(self.priority_queue) > 0):
+        if len(self.priority_queue) > 0:
             # start with zero in case you really, really need something now.
             # for each priority level
             for i in range(10):
                 # find the first item with that priority level
                 for x in range(len(self.priority_queue)):
                     # if an element has the correct priority
-                    if(self.priority_queue[x][0] == i):
+                    if self.priority_queue[x][0] == i:
                         action = self.priority_queue.pop(x)
                         func = action[1]
                         params = action[2]
                         
                         return func(obs, params)   
 
-    # a list of scheduled actions. Some actions will re-schedule themeselves, until the ai component for schedule management is complete
+    # a list of scheduled actions. Some actions will re-schedule themselves,
+    # until the ai component for schedule management is complete
     # priority queue items need to be able to fail and pass on the queue to the next item. 
-    # the schedule should be responsible for dealing with the issues of a failure. On failure, a re-scheduled event should be arranged
+    # the schedule should be responsible for dealing with the issues of a failure.
+    # On failure, a re-scheduled event should be arranged
 
     # add a function call to the schedule, if the game loop >= time, the function will be run
     def schedule_action(self, obs, time, function, params):
-        #print("action scheduled: " + str(function))
+        # print("action scheduled: " + str(function))
         self.schedule.append([time, function, params])
         return
 
@@ -148,14 +174,14 @@ class aBot2Agent(base_agent.BaseAgent):
             item_params = item[2]
 
             if game_loop >= item_time:
-                #print("running scheduled action: " + str(item_func))
+                # print("running scheduled action: " + str(item_func))
                 # it's time to run the thing, mark it off the schedule
                 self.schedule.remove(item)
                 # run it
                 ret = item_func(obs, item_params)
                 # TODO: if ret came back with a returned action, toss it on the schedule.
                 if ret is not None:
-                    print("PROBLEMO: scheduled functions don't run actions! Toss that badboy on the priority queue!")
+                    print("PROBLEM: scheduled functions don't run actions! Toss that badboy on the priority queue!")
 
     # how many screen pixels are in a building spot tile calibrate early and after a few buildings are produced.
     tile_size = [3.8,3.8] 
@@ -163,9 +189,8 @@ class aBot2Agent(base_agent.BaseAgent):
     # how many screen pixels are in a minimap pixel
     minimap_pixel_size = [4.9,4.9]
 
-
     # how large is each building in pixels and in tiles
-    # {"unit_id":unit_id,"tiles"[x,y],"screen pixels":[x,y],"minmap pixels":[x,y]}
+    # {"unit_id":unit_id,"tiles"[x,y],"screen pixels":[x,y],"minimap pixels":[x,y]}
     building_dimensions = [
             {"unit id":static.unit_ids["command center"], "tiles":[5,5]},
             {"unit id":static.unit_ids["barracks"], "tiles":[3,3]},
@@ -176,7 +201,7 @@ class aBot2Agent(base_agent.BaseAgent):
         ]
 
     # how many pixels are on the map
-    #absolute_map_dimensions = None
+    # absolute_map_dimensions = None
 
     # the center of the home command center on the minimap [int,int]
     command_home_base = None
@@ -185,12 +210,12 @@ class aBot2Agent(base_agent.BaseAgent):
     minimap_home_base = None
 
     # will probably be deprecated, using the screen_height_chart and minimap_offset_chart
-    #absolute_home_base = None
+    # absolute_home_base = None
 
     # The edges of the minimap can't be moved to, because of the size of the screen. 
     # Generally we care about the center of the screen, this gives us the top left pixel that can be clicked on.
     # [[x,y],[x,y]] top left and bottom right locations for the minimap selectable area
-    minimap_select_area = [[-1,-1],[-1,-1]]
+    minimap_select_area = [[-1, -1],[-1, -1]]
 
     # TF,x,y offsets for each minimap location to get absolute coords from screen coords
     # The first element is whether the location has been charted
@@ -200,7 +225,8 @@ class aBot2Agent(base_agent.BaseAgent):
     # 0,0 is the center of the command center
     screen_height_chart = None
 
-    # x,y of the position of the top-most pixel of screen_height_chart (in screen pixels) relative to the command center's center pixel
+    # x,y of the position of the top-most pixel of screen_height_chart (in screen pixels)
+    # relative to the command center's center pixel
     screen_height_chart_offset = None
 
     charting_order = None
@@ -210,12 +236,12 @@ class aBot2Agent(base_agent.BaseAgent):
             print("You're trying to perform a False action")
             return None
         else:
-            #print("Doing action: " + str(action))
+            # print("Doing action: " + str(action))
             action_id = action["id"]
             action_params = action["params"]
 
             if action_id not in obs.observation["available_actions"]:
-                #print("Warning, cannot perform action: " + str(action_id) + " We should reschedule")
+                # print("Warning, cannot perform action: " + str(action_id) + " We should reschedule")
                 return None
 
             action = actions.FunctionCall(action_id, action_params)
@@ -225,31 +251,29 @@ class aBot2Agent(base_agent.BaseAgent):
     def step(self, obs):
         super().step(obs)
         self.reward = obs.reward
-        if(self.reward != 0):
+        if self.reward != 0:
             print(f"reward: {self.reward}")
         
-        #time.sleep(.5)
+        # time.sleep(.5)
 
         alerts = obs.observation["alerts"]
         if alerts is not None and len(alerts) > 0:
             print("Alerts: " + str(alerts))
 
-        #last_act = obs.observation["last_actions"]
-        #if last_act is not None and len(last_act) > 0:
+        # last_act = obs.observation["last_actions"]
+        # if last_act is not None and len(last_act) > 0:
         #   print("Last Action: " + str(last_act))
-        
-
 
         # what is our absolute game turn index
         # used in qtables and scheduling
         game_loop = obs.observation["game_loop"][0]
-        #print(f"step: {str(game_loop)}")
+        # print(f"step: {str(game_loop)}")
 
         if game_loop == 0:
             print("initializing game loop")
             self.init_and_calibrate(obs)
 
-        # if there's a multistep action in progress, perform the required callback.
+        # if there's a multi step action in progress, perform the required callback.
         # This prevents thrashing on the priority queue, while giving a chance to check if a previous action worked
         cb = self.try_callback(obs)
         if cb is not False and cb is not None:
@@ -262,7 +286,7 @@ class aBot2Agent(base_agent.BaseAgent):
         while len(self.priority_queue) > 0:
             action = self.perform_priority_action(obs)
 
-            #print("action: " + str(action))
+            # print("action: " + str(action))
             # if this action results in an api call, do it.
             if action is not False and action is not None:
                 return action
@@ -273,7 +297,7 @@ class aBot2Agent(base_agent.BaseAgent):
     # Load up the priority_queue with important things to do at the beginning of the game.
     # 1) Build an SCV
     # 2) add starting command center to current buildings list
-    # 3) Callibrate minimap and tile dimensions, 
+    # 3) Calibrate minimap and tile dimensions,
     # -) Control group Command Center (10) Note, this is now linked to build an scv.
     # 4) Control group SCVs
     # 5) Plan supply depot location
@@ -281,16 +305,20 @@ class aBot2Agent(base_agent.BaseAgent):
     def init_and_calibrate(self, obs):
         self.priority_queue = [
                 [2, self.set_up_builder_ai, {}],
-                [2, map_reader.calibrate_map_data, {"bot":self}], # select command center
-                [2, building_planner.load_building_plan, {"bot":self}],
-                #[3, self.train_scv, {}], # control grouping command center should be linked to this. Note: build order might not need this, but if it does, do it
-                [3, map_reader.load_map_data, {"bot":self}],
-                [3, map_reader.center_screen_on_main, {"bot":self}], # Important step. click on the minimap where the main base is... this aligns config stuff to the screen
-                [4, self.control_group_scvs, {}], # good for keeping count of current scvs. useful in build planning
-                #[5, self.make_supply_depot, {}], # choose supply depot location, schedule scv move to location, schedule build supply depot
-                [6, self.start_alice_the_builder, {}], # bring in Alice, THE BUILDER! Actor/Critic siloed for building buildings and units.
+                [2, map_reader.calibrate_map_data, {"bot": self}], # select command center
+                [2, building_planner.load_building_plan, {"bot": self}],
+                # Note: build order might not need this, but if it does, do it
+                # [3, self.train_scv, {}], # control grouping command center should be linked to this.
+                [3, map_reader.load_map_data, {"bot": self}],
+                # Important step. click on the minimap where the main base is... this aligns config stuff to the screen
+                [3, map_reader.center_screen_on_main, {"bot": self}],
+                [4, self.control_group_scvs, {}],  # good for keeping count of current scvs. useful in build planning
+                # choose supply depot location, schedule scv move to location, schedule build supply depot
+                # [5, self.make_supply_depot, {}],
+                # bring in Alice, THE BUILDER! Actor/Critic siloed for building buildings and units.
+                [6, self.start_alice_the_builder, {}],
                 [8, self.schedule_print_data, {}] # regular printouts of what's going on.
-                #[7, self.test_move_screen, {}]
+                # [7, self.test_move_screen, {}]
             ]
 
         return
