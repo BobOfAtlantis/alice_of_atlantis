@@ -57,6 +57,54 @@ class aBot2Agent(base_agent.BaseAgent):
         self.old_o = None
         self.old_time = None
 
+        # how many screen pixels are in a building spot tile calibrate early and after a few buildings are produced.
+        self.tile_size = [3.8, 3.8]
+
+        # how many screen pixels are in a minimap pixel
+        self.minimap_pixel_size = [4.9, 4.9]
+
+        # how large is each building in pixels and in tiles
+        # {"unit_id":unit_id,"tiles"[x,y],"screen pixels":[x,y],"minimap pixels":[x,y]}
+        self.building_dimensions = [
+            {"unit id": static.unit_ids["command center"], "tiles":[5, 5]},
+            {"unit id": static.unit_ids["barracks"], "tiles":[3, 3]},
+            {"unit id": static.unit_ids["supply depot"], "tiles":[2, 2]},
+            {"unit id": static.unit_ids["supply depot lowered"], "tiles":[2, 2]},
+            {"unit id": static.unit_ids["mineral field"], "tiles":[2, 1]},
+            {"unit id": static.unit_ids["mineral field 750"], "tiles":[2, 1]}
+        ]
+
+        # how many pixels are on the map
+        # absolute_map_dimensions = None
+
+        # the center of the home command center on the minimap [int,int]
+        self.command_home_base = None
+
+        # should be the same as command_home_base, unless it's too close to the edge, which blocks the screen position.
+        self.minimap_home_base = None
+
+        # will probably be deprecated, using the screen_height_chart and minimap_offset_chart
+        # absolute_home_base = None
+
+        # The edges of the minimap can't be moved to, because of the size of the screen.
+        # Generally we care about the center of the screen, this gives us the top left pixel that can be clicked on.
+        # [[x,y],[x,y]] top left and bottom right locations for the minimap selectable area
+        self.minimap_select_area = [[-1, -1], [-1, -1]]
+
+        # TF,x,y offsets for each minimap location to get absolute coords from screen coords
+        # The first element is whether the location has been charted
+        self.map_offset_chart = None
+
+        # TF,x,y,height chart for each pixel to calibrate the minimap offset chart. (in screen pixels)
+        # 0,0 is the center of the command center
+        self.screen_height_chart = None
+
+        # x,y of the position of the top-most pixel of screen_height_chart (in screen pixels)
+        # relative to the command center's center pixel
+        self.screen_height_chart_offset = None
+
+        self.charting_order = None
+
     def setup(self, obs_spec, action_spec):
         super().setup(obs_spec, action_spec)
         self.builder = None
@@ -191,56 +239,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 if ret is not None:
                     print("PROBLEM: scheduled functions don't run actions! Toss that badboy on the priority queue!")
 
-    # how many screen pixels are in a building spot tile calibrate early and after a few buildings are produced.
-    tile_size = [3.8, 3.8]
-
-    # how many screen pixels are in a minimap pixel
-    minimap_pixel_size = [4.9, 4.9]
-
-    # how large is each building in pixels and in tiles
-    # {"unit_id":unit_id,"tiles"[x,y],"screen pixels":[x,y],"minimap pixels":[x,y]}
-    building_dimensions = [
-            {"unit id": static.unit_ids["command center"], "tiles":[5, 5]},
-            {"unit id": static.unit_ids["barracks"], "tiles":[3, 3]},
-            {"unit id": static.unit_ids["supply depot"], "tiles":[2, 2]},
-            {"unit id": static.unit_ids["supply depot lowered"], "tiles":[2, 2]},
-            {"unit id": static.unit_ids["mineral field"], "tiles":[2, 1]},
-            {"unit id": static.unit_ids["mineral field 750"], "tiles":[2, 1]}
-        ]
-
-    # how many pixels are on the map
-    # absolute_map_dimensions = None
-
-    # the center of the home command center on the minimap [int,int]
-    command_home_base = None
-
-    # should be the same as command_home_base, unless it's too close to the edge, which blocks the screen position.
-    minimap_home_base = None
-
-    # will probably be deprecated, using the screen_height_chart and minimap_offset_chart
-    # absolute_home_base = None
-
-    # The edges of the minimap can't be moved to, because of the size of the screen. 
-    # Generally we care about the center of the screen, this gives us the top left pixel that can be clicked on.
-    # [[x,y],[x,y]] top left and bottom right locations for the minimap selectable area
-    minimap_select_area = [[-1, -1], [-1, -1]]
-
-    # TF,x,y offsets for each minimap location to get absolute coords from screen coords
-    # The first element is whether the location has been charted
-    minimap_offset_chart = None
-
-    # TF,x,y,height chart for each pixel to calibrate the minimap offset chart. (in screen pixels)
-    # 0,0 is the center of the command center
-    screen_height_chart = None
-
-    # x,y of the position of the top-most pixel of screen_height_chart (in screen pixels)
-    # relative to the command center's center pixel
-    screen_height_chart_offset = None
-
-    charting_order = None
-
-    @staticmethod
-    def try_perform_action(obs, action):
+    def try_perform_action(self, obs, action):
         if action is None or action is False:
             print("You're trying to perform a False action")
             return None
@@ -915,10 +914,6 @@ class aBot2Agent(base_agent.BaseAgent):
                 self.callback_method = self.train_marine
                 return to_do
 
-        self.callback_parameters = {}
-        self.callback_method = None
-        return
-
     def trigger_supply_depots(self, obs, args):
         # have we been here before? are we thrashing?
         # print("trying to lower or raise some supply depots")
@@ -1259,11 +1254,6 @@ class aBot2Agent(base_agent.BaseAgent):
                 
                 return self.try_perform_action(obs, action) 
 
-        self.callback_method = None
-        self.callback_parameters = {}
-       
-        return    
-
     def get_builder_state(self, obs, args):
         current_time = obs.observation["game_loop"][0]
         minerals = obs.observation["player"][1]
@@ -1401,7 +1391,6 @@ class aBot2Agent(base_agent.BaseAgent):
         return
 
     # print out useful data for debugging whatever you're working on
-    @staticmethod
     def print_data(self, obs, args):
         single_select = obs.observation["single_select"]
         
