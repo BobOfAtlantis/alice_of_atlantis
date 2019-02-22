@@ -28,7 +28,7 @@ from pysc2.lib import actions  # features, units
 np.set_printoptions(threshold=10000)
 
 
-class aBot2Agent(base_agent.BaseAgent):
+class ABot2Agent(base_agent.BaseAgent):
     def __init__(self):
         super().__init__()
         self.builder = None
@@ -487,7 +487,7 @@ class aBot2Agent(base_agent.BaseAgent):
                         # check the screen for hp to see how we're doing on that
                         # take a diagonal through the spot and get any non-zero numbers, what's the avg
                         # potential bug around the shape of dmg_spot
-                        print("Shape of the building array" + (str(dmg_spot.shape)))
+                        # print("Shape of the building array" + (str(dmg_spot.shape)))
                         ctr = 0
                         total = 0
                         for i in range(len(dmg_spot)):
@@ -710,7 +710,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # only need to do this when poor.
         if finance["minerals"] < unit_cost[0] or finance["gas"] < unit_cost[1]:
             # TODO: need to have a method to set this time correctly based on distance to location from the selected SCV
-            print("args check3: " + str(building))
+            # print("args check3: " + str(building))
             self.schedule_action(obs, current_time + 140,
                                  self.construct_building,
                                  {"building": building, "schedule": True})
@@ -719,7 +719,7 @@ class aBot2Agent(base_agent.BaseAgent):
             self.callback_parameters = {}
             return self.move_scv_to_location(obs, {"location": location, "building": building, "schedule": False})
         else:
-            print("args check4: " + str(building))
+            # print("args check4: " + str(building))
             self.callback_method = None
             self.callback_parameters = {}
             return self.construct_building(obs, {"building": building, "schedule": False})
@@ -780,7 +780,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # if we're coming from a schedule, we have to pop this item onto the queue.
         if "schedule" in args and args["schedule"]:
             args["schedule"] = False
-            print("checking construct_building args: " + str(args))
+            # print("checking construct_building args: " + str(args))
             self.priority_queue.append([4, self.construct_building, args])
             return
 
@@ -799,8 +799,8 @@ class aBot2Agent(base_agent.BaseAgent):
         # we should have an SCV by now, let's move him to the right place.
         # move the screen to the right place.
 
-        print("building checkup: " + str(building))
-        print("what type is location: " + str(type(building['location'])))
+        # print("building checkup: " + str(building))
+        # print("what type is location: " + str(type(building['location'])))
         if map_reader.is_point_on_screen(obs, {"bot": self, "point": building["location"]}):
             # self.priority_queue.append([1, self.add_to_group, {"group":"builders"}])
             
@@ -846,7 +846,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
             else:
                 # TODO: check if the building has a builder assigned to it with a control group
-                print("args check: " + str(args))
+                # print("args check: " + str(args))
                 self.priority_queue.append([1, self.construct_building, args])
                 # check the building location for an scv
                 return self.get_scv(obs, {"location": building["location"]})
@@ -856,7 +856,7 @@ class aBot2Agent(base_agent.BaseAgent):
         else:
             # move the screen to where it needs to be, then come back here
             location = building["location"]
-            print("args check2: " + str(args))
+            # print("args check2: " + str(args))
             self.priority_queue.append([1, self.construct_building, args])
             return map_reader.move_to_point(obs, {"bot": self, "point": location})
 
@@ -1082,7 +1082,7 @@ class aBot2Agent(base_agent.BaseAgent):
         return self.try_perform_action(obs, action)
 
     def make_scv_work(self, obs, args):
-        print("ya'll get back to work now, ya hear?")
+        # print("ya'll get back to work now, ya hear?")
         single_select = obs.observation["single_select"]
         scv = None
         if len(single_select) > 0:
@@ -1092,7 +1092,7 @@ class aBot2Agent(base_agent.BaseAgent):
         if scv is None:
             multi_select = obs.observation["multi_select"]
             if multi_select is not None and len(multi_select) > 0:
-                print("haven't tested this yet, getting an scv from a multiselect")
+                # print("getting an scv from a multiselect")
 
                 for i in range(len(multi_select)):
                     ms = multi_select[i]
@@ -1114,9 +1114,9 @@ class aBot2Agent(base_agent.BaseAgent):
 
         if scv is not None:
             # ok, we have an scv, let's get it back to work.
-            print("we have an scv, command it to work!")
+            # print("we have an scv, command it to work!")
             available_actions = obs.observation["available_actions"]
-            print("available actions: " + str(available_actions))
+            # print("available actions: " + str(available_actions))
             if static.action_ids["harvest return"] in available_actions:
                 print("harvest return is available, do it")
                 action = { 
@@ -1131,7 +1131,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 return do_action
 
             else:
-                print("harvest return wasn't available, let's find a mineral patch to go to")
+                # print("harvest return wasn't available, let's find a mineral patch to go to")
 
                 self.callback_method = None
                 self.callback_parameters = {}
@@ -1501,7 +1501,7 @@ def main():
     # print(sys.path)
     os.system('python -m run_agent '
               '--map Simple64 '
-              '--agent abot2.aBot2Agent '
+              '--agent abot2.ABot2Agent '
               '--agent_race terran '
               '--max_agent_steps 0 '
               '--game_steps_per_episode 50000')
