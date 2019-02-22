@@ -40,6 +40,7 @@ class aBot2Agent(base_agent.BaseAgent):
         self.minimap_dimensions = None
 
         self.building_plan = {}
+        self.buildings = []
 
         self.alert_queue = []
 
@@ -49,6 +50,12 @@ class aBot2Agent(base_agent.BaseAgent):
         self.idle_scv_locations = []
         self.priority_queue = []
         self.schedule = []
+        self.map_name = None
+
+        # vars to calculate reward after an action
+        self.old_empire_value = None
+        self.old_o = None
+        self.old_time = None
 
     def setup(self, obs_spec, action_spec):
         super().setup(obs_spec, action_spec)
@@ -65,10 +72,10 @@ class aBot2Agent(base_agent.BaseAgent):
         # self.sess.run(tf.global_variables_initializer())
 
         # screen dimensions in pixels (for the simple64 map it's 84x84)
-        self.screen_dimensions = [obs_spec["feature_screen"][1],obs_spec["feature_screen"][2]]
+        self.screen_dimensions = [obs_spec["feature_screen"][1], obs_spec["feature_screen"][2]]
 
         # minimap dimensions in minimap pixels for the simple64 map it's 64x64)
-        self.minimap_dimensions = [obs_spec["feature_minimap"][1],obs_spec["feature_minimap"][2]]
+        self.minimap_dimensions = [obs_spec["feature_minimap"][1], obs_spec["feature_minimap"][2]]
 
         # print(f"obs_spec: {obs_spec}")
         # obs_spec: {
@@ -108,6 +115,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # status includes attempt number, result of last information etc
         # {"building type":bt, "builder control group": bcg, "location": [x,y], "status": state}
         self.building_plan = {}
+        self.buildings = []
 
         # whenever obs sends us an alert about the game.
         # We can't handle it immediately if we have a callback to do, but we should check it out after that
@@ -184,20 +192,20 @@ class aBot2Agent(base_agent.BaseAgent):
                     print("PROBLEM: scheduled functions don't run actions! Toss that badboy on the priority queue!")
 
     # how many screen pixels are in a building spot tile calibrate early and after a few buildings are produced.
-    tile_size = [3.8,3.8] 
+    tile_size = [3.8, 3.8]
 
     # how many screen pixels are in a minimap pixel
-    minimap_pixel_size = [4.9,4.9]
+    minimap_pixel_size = [4.9, 4.9]
 
     # how large is each building in pixels and in tiles
     # {"unit_id":unit_id,"tiles"[x,y],"screen pixels":[x,y],"minimap pixels":[x,y]}
     building_dimensions = [
-            {"unit id":static.unit_ids["command center"], "tiles":[5,5]},
-            {"unit id":static.unit_ids["barracks"], "tiles":[3,3]},
-            {"unit id":static.unit_ids["supply depot"], "tiles":[2,2]},
-            {"unit id":static.unit_ids["supply depot lowered"], "tiles":[2,2]},
-            {"unit id":static.unit_ids["mineral field"], "tiles":[2,1]},
-            {"unit id":static.unit_ids["mineral field 750"], "tiles":[2,1]}
+            {"unit id": static.unit_ids["command center"], "tiles":[5, 5]},
+            {"unit id": static.unit_ids["barracks"], "tiles":[3, 3]},
+            {"unit id": static.unit_ids["supply depot"], "tiles":[2, 2]},
+            {"unit id": static.unit_ids["supply depot lowered"], "tiles":[2, 2]},
+            {"unit id": static.unit_ids["mineral field"], "tiles":[2, 1]},
+            {"unit id": static.unit_ids["mineral field 750"], "tiles":[2, 1]}
         ]
 
     # how many pixels are on the map
@@ -215,7 +223,7 @@ class aBot2Agent(base_agent.BaseAgent):
     # The edges of the minimap can't be moved to, because of the size of the screen. 
     # Generally we care about the center of the screen, this gives us the top left pixel that can be clicked on.
     # [[x,y],[x,y]] top left and bottom right locations for the minimap selectable area
-    minimap_select_area = [[-1, -1],[-1, -1]]
+    minimap_select_area = [[-1, -1], [-1, -1]]
 
     # TF,x,y offsets for each minimap location to get absolute coords from screen coords
     # The first element is whether the location has been charted
@@ -231,7 +239,8 @@ class aBot2Agent(base_agent.BaseAgent):
 
     charting_order = None
 
-    def try_perform_action(self, obs, action):
+    @staticmethod
+    def try_perform_action(obs, action):
         if action is None or action is False:
             print("You're trying to perform a False action")
             return None
@@ -305,7 +314,7 @@ class aBot2Agent(base_agent.BaseAgent):
     def init_and_calibrate(self, obs):
         self.priority_queue = [
                 [2, self.set_up_builder_ai, {}],
-                [2, map_reader.calibrate_map_data, {"bot": self}], # select command center
+                [2, map_reader.calibrate_map_data, {"bot": self}],  # select command center
                 [2, building_planner.load_building_plan, {"bot": self}],
                 # Note: build order might not need this, but if it does, do it
                 # [3, self.train_scv, {}], # control grouping command center should be linked to this.
@@ -317,7 +326,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 # [5, self.make_supply_depot, {}],
                 # bring in Alice, THE BUILDER! Actor/Critic siloed for building buildings and units.
                 [6, self.start_alice_the_builder, {}],
-                [8, self.schedule_print_data, {}] # regular printouts of what's going on.
+                [8, self.schedule_print_data, {}]  # regular printouts of what's going on.
                 # [7, self.test_move_screen, {}]
             ]
 
@@ -326,28 +335,30 @@ class aBot2Agent(base_agent.BaseAgent):
     # if it's already set up, don't re-set it.
     def set_up_builder_ai(self, obs, args):
         if self.builder is None:
-            self.map_name = util.get_map_folder(obs, args = {"bot":self})
-            self.builder = builder_ai.Builder(args = {"bot":self})
+            self.map_name = util.get_map_folder(obs, args={"bot": self})
+            self.builder = builder_ai.Builder(args={"bot": self})
             self.builder.reset(self.get_builder_state(obs, {}))
         return
 
     # This is a big old complicated set of machinery:
     # The intended purpose is to check the buildings that we've ordered against what we can see on the screen.
-    # If "action free" is set to True, then this is done passively with just the buildings available to be seen on the screen
-    # Otherwise, we go through the list of buildings that we've ordered and check up on them all, moving the screen around the minimap until we've hit each building
-    # Also, as we go through buildings, control group them to the appropriate control groups for quick counting and checking far off buildings without moving the screen
-
-    # Think about: using control groups to get a quick count of known buildings, will only have to check up on buildings if the don't exist in the control groups
+    # If "action free" is set to True, then this is done passively with just the buildings available to be seen on
+    # the screen
+    # Otherwise, we go through the list of buildings that we've ordered and check up on them all, moving the screen
+    # around the minimap until we've hit each building
+    # Also, as we go through buildings, control group them to the appropriate control groups for quick counting and
+    # checking far off buildings without moving the screen
+    # Think about: using control groups to get a quick count of known buildings, will only have to check up on
+    # buildings if the don't exist in the control groups
     # 0 = Command and Supply, 5 = Production and Tech
     def building_maintenance(self, obs, args):
-        #print("building maintenance")
+        # print("building maintenance")
         # is this method just scanning what's available to see on screen, or doing a comprehensive check up?
         action_free = False
         if "action free" in args and args["action free"]:
             action_free = True
 
         # 1 copy the list of buildings to working_list
-        working_list = None
         if "working list" in args:
             # are we already in progress going through the list?
             working_list = args["working list"]
@@ -357,96 +368,97 @@ class aBot2Agent(base_agent.BaseAgent):
 
         current_time = obs.observation["game_loop"][0]
 
-
-        scr_loc = map_reader.get_relative_screen_location(obs, {"bot":self})
+        scr_loc = map_reader.get_relative_screen_location(obs, {"bot": self})
 
         # a representative sample of buildings on the screen to be added to control groups
-        control_group_me = {}
+        # control_group_me = {}
 
         scr_obs = obs.observation['feature_screen'][static.screen_features["unit type"]]
         scr_dmg = obs.observation['feature_screen'][static.screen_features["unit hit points ratio"]]
-        #print("scr_obs type: " + str(type(scr_obs)))
+        # print("scr_obs type: " + str(type(scr_obs)))
         
         # 2 check the status of each building that is on the current screen, update the status to buildings
         for b in working_list:
             # is on screen?
             b_loc = b["location"]
 
-            #print("bldg: " + str(b))
-            #print("scr_loc: " + str(scr_loc))
+            # print("bldg: " + str(b))
+            # print("scr_loc: " + str(scr_loc))
 
             if b["status"] == "destroyed":
-                working_list.remove(b) # the building is already marked as destroyed, we don't need to check on it
-                #print("working list: " + str(working_list))
-                #print("bldg: " + str(b))
+                working_list.remove(b)  # the building is already marked as destroyed, we don't need to check on it
+                # print("working list: " + str(working_list))
+                # print("bldg: " + str(b))
                 continue
 
             # is b_loc between scr_loc[0] and scr_loc[1]?
-            elif(b_loc[0] > scr_loc[0][0] and b_loc[0] < scr_loc[1][0]):
-                if(b_loc[1] > scr_loc[0][1] and b_loc[1] < scr_loc[1][1]):
+            elif scr_loc[0][0] < b_loc[0] < scr_loc[1][0]:
+                if scr_loc[0][1] < b_loc[1] < scr_loc[1][1]:
                     # the building is on screen, so we don't need to move the screen to check on it.
                     working_list.remove(b)
-                    # bulding is on screen, check up on it
-                    #print(str(b))
+                    # building is on screen, check up on it
+                    # print(str(b))
 
-                    current_status = b["status"]
-                    b_dims = [2,2]
+                    # current_status = b["status"]
+                    b_dims = [2, 2]
                     for dim in self.building_dimensions:
                         if dim["unit id"] == b["type"]:
                             b_dims = dim["tiles"]
 
-                    #print("dims: " + str(b_dims))
+                    # print("dims: " + str(b_dims))
                     
                     # is the building actually there?
-                    #unit_y, unit_x = (scr_obs == static.unit_ids[b["type"]]).nonzero()
+                    # unit_y, unit_x = (scr_obs == static.unit_ids[b["type"]]).nonzero()
 
                     # where should the building be? 
                     # should be the center pixel
                     b_scr = [b_loc[0] - scr_loc[0][0], b_loc[1] - scr_loc[0][1]]
 
                     # where the top-left of the building should be on the screen
-                    b_tl_scr = [b_scr[0] - (b_dims[0] * self.tile_size[0] / 2), b_scr[1] - (b_dims[1] * self.tile_size[1] / 2)]
+                    b_tl_scr = [b_scr[0] - (b_dims[0] * self.tile_size[0] / 2),
+                                b_scr[1] - (b_dims[1] * self.tile_size[1] / 2)]
                     # stay within the boundaries of the screen
                     b_tl_scr = [max(0, b_tl_scr[0]), max(0, b_tl_scr[1])]
 
-                    #print("b_tl_scr: " + str(b_tl_scr))
-                    b_width = b_dims[0] * self.tile_size[0]
-                    b_height = b_dims[1] * self.tile_size[1]
-                    #print("b_width: " + str(b_width))
-                    #print("b_height: " + str(b_height))
+                    # print("b_tl_scr: " + str(b_tl_scr))
 
                     # where the bottom right of the building should be on the screen
-                    b_br_scr = [b_scr[0] + (b_dims[0] * self.tile_size[0] / 2), b_scr[1] + (b_dims[1] * self.tile_size[1] / 2)]
+                    b_br_scr = [b_scr[0] + (b_dims[0] * self.tile_size[0] / 2),
+                                b_scr[1] + (b_dims[1] * self.tile_size[1] / 2)]
                     # stay within the boundaries of the screen
-                    b_br_scr = [min(self.screen_dimensions[0] - 1, b_br_scr[0]), min(self.screen_dimensions[1] - 1, b_br_scr[1])]
+                    b_br_scr = [min(self.screen_dimensions[0] - 1, b_br_scr[0]),
+                                min(self.screen_dimensions[1] - 1, b_br_scr[1])]
                     
                     # next, get a numpy subset of sel for the area b_tl_scr through b_br_scr
-                    # b_spot = scr_obs[util.round(b_tl_scr[0]):util.round(b_width+1), util.round(b_tl_scr[1]):util.round(b_height+1)]
+                    # b_spot = scr_obs[util.round(b_tl_scr[0]):util.round(b_width+1),
+                    #                  util.round(b_tl_scr[1]):util.round(b_height+1)]
                     # really zooming in here in order not to read neighboring buildings as the one we're looking for
-                    b_spot = scr_obs[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
-                    #print("b_spot: " + str(b_spot))
+                    b_spot = scr_obs[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),
+                                     util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
+                    # print("b_spot: " + str(b_spot))
 
-                    ys, xs = (b_spot == b["type"]).nonzero()
+                    ys, xs = np.nonzero(b_spot == b["type"])
                     if xs is None or len(xs) == 0 and b["type"] == static.unit_ids["supply depot"]:
                         # try alternate
-                        ys, xs = (b_spot == static.unit_ids["supply depot lowered"]).nonzero()
-                        
+                        ys, xs = np.nonzero(b_spot == static.unit_ids["supply depot lowered"])
 
-                    # not sure how many there should be, or how many there would be with overlap. Let's just go with 15 for now
+                    # print(f"Yo Yo Yo xs: {xs}, ys:{ys}")i
+                    # not sure how many there should be, or how many there would be with overlap
                     if xs is not None and len(xs) > 15:
-                        #print("number of pixels on screen: " + str(len(xs)))
+                        # print("number of pixels on screen: " + str(len(xs)))
                         # the building does seem to be there
                         pass
                     else:
-                        ys, xs = (b_spot).nonzero()
+                        ys, xs = b_spot.nonzero()
                         if xs is not None and len(xs) > 15:
                             # there's something in the way of the building, or something weird happening
-                            #print(f"something is up with the building: {b}")
-                            #time.sleep(2)
+                            # print(f"something is up with the building: {b}")
+                            # time.sleep(2)
                             pass
                         else:
-                            #print("that building is not there: " + str(xs))
-                            # it is possible that the building has not yet been placed, if it's under construction or planned
+                            # print("that building is not there: " + str(xs))
+                            # it is possible that the building has not yet been placed,
+                            # if it's under construction or planned
                             # set the building with that location in the buildings list to destroyed. 
                             
                             for upd_bldg in self.buildings:
@@ -466,11 +478,13 @@ class aBot2Agent(base_agent.BaseAgent):
                                         upd_bldg["status"] = "destroyed"
                                 upd_bldg["timestamp"] = current_time
 
-                    dmg_spot = scr_dmg[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
+                    dmg_spot = scr_dmg[util.round(b_tl_scr[1] + 2):util.round(b_br_scr[1] - 2),
+                                       util.round(b_tl_scr[0] + 2):util.round(b_br_scr[0] - 2)]
 
                     if dmg_spot is None or len(dmg_spot) == 0 or len(dmg_spot[0]) == 0:
                         print(f"trying to detect the damage of building: {b} but something is wrong")
-                        # TODO: figure out how we get here. I think it has to do with the screen being moved outside of a minimap click
+                        # TODO: figure out how we get here. I think it has to do with the screen being moved
+                        #  outside of a minimap click
                         pass
 
                     else:
@@ -481,11 +495,12 @@ class aBot2Agent(base_agent.BaseAgent):
                         ctr = 0
                         total = 0
                         for i in range(len(dmg_spot)):
-                            # taking a diagonal of x/y's... but if the building is hanging off the edge of the screen on the right or left, color within the lines
+                            # taking a diagonal of x/y's... but if the building is hanging off the edge of the screen
+                            # on the right or left, color within the lines
                             x_var = i
-                            x_var = min(x_var,len(dmg_spot[i])-1)
-                            x_var = max(x_var,0)
-                            if(dmg_spot[i][x_var] > 0):
+                            x_var = min(x_var, len(dmg_spot[i])-1)
+                            x_var = max(x_var, 0)
+                            if dmg_spot[i][x_var] > 0:
                                 ctr += 1
                                 total += dmg_spot[i][x_var]
 
@@ -493,18 +508,18 @@ class aBot2Agent(base_agent.BaseAgent):
                         if ctr > 0:
                             health = total / ctr
 
-                        #print("health: " + str(health))
+                        # print("health: " + str(health))
                         # update the building status
                         if health == 255:
                             for upd_bldg in self.buildings:
                                 if upd_bldg["location"] == b["location"]:
                                     upd_bldg["timestamp"] = current_time
 
-                                    if upd_bldg["status"] == "under construction" or upd_bldg["status"] == "planned" or upd_bldg["status"] == "damaged":
+                                    if upd_bldg["status"] == "under construction" or upd_bldg["status"] == "planned" \
+                                            or upd_bldg["status"] == "damaged":
                                         upd_bldg["status"] = "complete"
                                         upd_bldg["attempt"] = 0
 
-                        
                         elif health > 0:
                             for upd_bldg in self.buildings:
                                 if upd_bldg["location"] == b["location"]:
@@ -516,14 +531,12 @@ class aBot2Agent(base_agent.BaseAgent):
                                     if upd_bldg["status"] == "complete":
                                         upd_bldg["status"] = "damaged"
 
-
                     # 4 for each visible building that is not a command center, remove it from working_list
-                    
-
             pass
         
         # if we're just observing the current screen without taking any actions, leave now.
-        if action_free: return
+        if action_free:
+            return
 
         # TODO: 3 control group each building type into the correct control group
         # Keep track of each building type available on screen
@@ -531,19 +544,20 @@ class aBot2Agent(base_agent.BaseAgent):
         # Check through the list to make sure no alien buildings are in the selection.
         # Control group the selected items into the correct control group
 
-
-        # 5 for the first command center on the working list, go to the building
-        #   Count the scvs on the screen and update the command center status to include them, remove command center from working list
-        #   Repeat steps 1-4
+        # 5 For the first command center on the working list, go to the building
+        # Count the scvs on the screen and update the command center status to include them,
+        # remove command center from working list
+        # Repeat steps 1-4
 
         # for each remaining building on the working list go to the building and repeat steps 1-4
-        if len(working_list) == 0:return
+        if len(working_list) == 0:
+            return
         for b in working_list:
             
             if "location" in b:
                 loc = b["location"]
 
-                action = map_reader.move_to_point(obs, {"bot":self, "point":loc})
+                action = map_reader.move_to_point(obs, {"bot": self, "point": loc})
                 if action is None:
                     continue
                 else:
@@ -553,19 +567,6 @@ class aBot2Agent(base_agent.BaseAgent):
 
             else: 
                 working_list.remove(b)
-        
-
-        return
-
-    def test_move_screen(self, obs, args):
-        print("hey, let's try moving the screen")
-        x = 30.5
-        y = 30.5
-        action = { 
-                    "id"    :   static.action_ids["move camera"], 
-                    "params":   [[x,y]] 
-                 }
-        return self.try_perform_action(obs, action)
 
     # mop indicates that this action requires multiple operations
     def train_scv(self, obs, args):
@@ -581,10 +582,10 @@ class aBot2Agent(base_agent.BaseAgent):
         if static.action_ids["train scv"] in obs.observation["available_actions"]:
             # if the next thing to do isn't to press the build scv button... then try to select a command center again
 
-            to_do = { "id":static.action_ids["train scv"], 
-                      "params":[ [static.params["queued"]] ] 
-                    }
-            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
+            to_do = {"id": static.action_ids["train scv"],
+                     "params": [[static.params["queued"]]]}
+
+            action = self.try_perform_action(obs, to_do)
 
             # LINKED ACTION: if we take this out, make sure to ctrl group the first cc in init_and_calibrate
             # while we're here, if the command center isn't in the control group, that needs to happen
@@ -594,43 +595,37 @@ class aBot2Agent(base_agent.BaseAgent):
                 self.callback_parameters = {}
                 return action
             else:
-                self.callback_parameters = {"type":"append","group":0}
+                self.callback_parameters = {"type": "append", "group": 0}
                 self.callback_method = self.control_group_selected
                 return action
 
-            
-
-        else: # command center not selected, let's select it
+        else:  # command center not selected, let's select it
             if ctr > 5:
-                #print("We're having unknown difficulty in building an scv, letting it off the queue")
+                # print("We're having unknown difficulty in building an scv, letting it off the queue")
                 # TODO: schedule some things to check to repair the problem
                 
                 self.callback_parameters = {}
                 self.callback_method = None
                 return
 
-            #TODO:
-            # check the multi select array to see if there are command centers already selected. If so, let's single select one of them to build the scv.
-            # check if there are command centers in the cc control group (0)
+            # TODO:
+            #   check the multi select array to see if there are command centers already selected.
+            #       If so, let's single select one of them to build the scv.
+            #   check if there are command centers in the cc control group (0)
 
-            to_do = self.select_building(obs, {"type":static.unit_ids['command center']})
-            if to_do == None:
+            to_do = self.select_building(obs, {"type": static.unit_ids['command center']})
+            if to_do is None:
                 # There wasn't a command center on screen, we must move to a command center.
-                self.callback_parameters = {"ctr":ctr}
+                self.callback_parameters = {"ctr": ctr}
                 self.callback_method = self.train_scv
-                return map_reader.center_screen_on_main(obs, {"bot":self})
+                return map_reader.center_screen_on_main(obs, {"bot": self})
 
             else:
-                self.callback_parameters = {"ctr":ctr}
+                self.callback_parameters = {"ctr": ctr}
                 self.callback_method = self.train_scv
                 return to_do
 
-        self.callback_parameters = {}
-        self.callback_method = None
-        return
-
     def control_group_scvs(self, obs, args):
-
         self.callback_method = None
         self.callback_parameters = {}
         return
@@ -646,24 +641,25 @@ class aBot2Agent(base_agent.BaseAgent):
             building_string = args["building"]
 
         building_type_string = None
-        if building_string == "supply depot": building_type_string = "supply depot"
-        elif building_string == "barracks": building_type_string = "production"
+        if building_string == "supply depot":
+            building_type_string = "supply depot"
+        elif building_string == "barracks":
+            building_type_string = "production"
 
-        #print("hey, let's prepare to build our first supply depot")
+        # print("hey, let's prepare to build our first supply depot")
 
-        # existing or planned buildings of the type we're tring to build
-        bldg_types = list(filter(lambda building: building["type"] == static.unit_ids[building_string], self.buildings))
+        # existing or planned buildings of the type we're trying to build
+        bldg_types = list(filter(lambda bldg: bldg["type"] == static.unit_ids[building_string], self.buildings))
 
         # places where we can build the building we're trying to build from a config file
         bldg_type_locations = self.building_plan[building_type_string]
 
-        for bt in bldg_types:
-            #print("we have: "+ str(bt))
-            pass
+        # for bt in bldg_types:
+        #    print("we have: "+ str(bt))
+        #    pass
         if bldg_types is None or len(bldg_types) == 0:
             print("no buildings found of type: " + building_string)
             print(self.buildings)
-
 
         # print("supply depots: " + str(supply_depots))
         # print("supply depot locations: " + str(supply_depot_locations))
@@ -695,8 +691,8 @@ class aBot2Agent(base_agent.BaseAgent):
 
                     # set the status to planned
                     location = l
-                    current_building["status"] == "planned"
-                    current_building["timestamp"] == current_time
+                    current_building["status"] = "planned"
+                    current_building["timestamp"] = current_time
                     building = current_building
                     found_location = True
                     break
@@ -731,10 +727,6 @@ class aBot2Agent(base_agent.BaseAgent):
             self.callback_parameters = {}
             return self.construct_building(obs, {"building": building, "schedule": False})
 
-        self.callback_method = None
-        self.callback_parameters = {}
-        return
-
     def move_scv_to_location(self, obs, args):
         # if we're coming from a schedule, we have to pop this item onto the queue.
         if "schedule" in args and args["schedule"]:
@@ -746,7 +738,7 @@ class aBot2Agent(base_agent.BaseAgent):
         if "location" in args:
             location = args["location"]
 
-        #print("Moving SCV to location: " + str(location))
+        # print("Moving SCV to location: " + str(location))
         # check if an scv is single selected
         # if not, return get_scv with self as a callback method defined in the callback args
         # add the scv to the builder control group.
@@ -754,10 +746,10 @@ class aBot2Agent(base_agent.BaseAgent):
         scv = None
 
         if len(single_select) > 0:
-            #print(single_select)
+            # print(single_select)
             if single_select[0][0] == static.unit_ids["scv"]:
                 scv = single_select[0]
-                #print("we have an SCV selected: " + str(scv))
+                # print("we have an SCV selected: " + str(scv))
 
         if scv is None:
             # no SCV selected, let's get one, then come back here
@@ -766,18 +758,14 @@ class aBot2Agent(base_agent.BaseAgent):
 
         # we should have an SCV by now, let's move him to the right place.
         # move the screen to the right place.
-        if map_reader.is_point_on_screen(obs, {"bot":self, "point":location}):
-            self.priority_queue.append([1, self.add_to_group, {"group":"builders"}])
+        if map_reader.is_point_on_screen(obs, {"bot": self, "point": location}):
+            self.priority_queue.append([1, self.add_to_group, {"group": "builders"}])
             # move the scv to the right place on the screen
-            return map_reader.issue_move_action_on_screen(obs, {"bot":self, "point":location})
+            return map_reader.issue_move_action_on_screen(obs, {"bot": self, "point": location})
         else:
             # move the screen to where it needs to be, then come back here
             self.priority_queue.append([1, self.move_scv_to_location, args])
-            return map_reader.move_to_point(obs, {"bot":self, "point":location})
-
-        self.callback_method = None
-        self.callback_parameters = {}
-        return
+            return map_reader.move_to_point(obs, {"bot": self, "point": location})
 
     # assign a builder to a control group for a building
     def assign_builder(self, obs, args):
@@ -788,7 +776,7 @@ class aBot2Agent(base_agent.BaseAgent):
         return
 
     def add_to_group(self, obs, args):
-        #print("Ok, let's add this to the group!")
+        # print("Ok, let's add this to the group!")
         return
 
     def construct_building(self, obs, args):
@@ -822,7 +810,7 @@ class aBot2Agent(base_agent.BaseAgent):
             # is an scv selected?
             single_select = obs.observation["single_select"]
             if len(single_select) > 0 and single_select[0][0] == static.unit_ids["scv"]:
-                scv = single_select[0]
+                # scv = single_select[0]
                 # build the building
                 
                 build_action = None
@@ -895,35 +883,35 @@ class aBot2Agent(base_agent.BaseAgent):
         if static.action_ids["train marine"] in obs.observation["available_actions"]:
             # if the next thing to do isn't to press the build scv button... then try to select a command center again
 
-            to_do = { "id":static.action_ids["train marine"], 
-                      "params":[ [static.params["queued"]] ] 
-                    }
-            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
+            to_do = {"id": static.action_ids["train marine"],
+                     "params": [[static.params["queued"]]]}
+            action = self.try_perform_action(obs, to_do)
 
             self.callback_method = None
             self.callback_parameters = {}
             return action
 
-        else: # barracks are not selected, let's select it
+        else:  # barracks are not selected, let's select it
             if ctr > 5:
                 # this is taking too long, abandon
                 self.callback_parameters = {}
                 self.callback_method = None
                 return
 
-            #TODO:
-            # check the multi select array to see if there are barracks already selected. If so, let's select them and start training marines
-            # check if there are command centers in the production control group (5)
+            # TODO:
+            #  check the multi select array to see if there are barracks already selected.
+            #    If so, let's select them and start training marines
+            #  check if there are command centers in the production control group (5)
 
-            to_do = self.select_building(obs, {"type":static.unit_ids['barracks']})
-            if to_do == None:
+            to_do = self.select_building(obs, {"type": static.unit_ids['barracks']})
+            if to_do is None:
                 # There wasn't a barracks on screen, we must move to a barracks
-                self.callback_parameters = {"ctr":ctr}
+                self.callback_parameters = {"ctr": ctr}
                 self.callback_method = self.train_marine
-                return map_reader.center_screen_on_main(obs, {"bot":self})
+                return map_reader.center_screen_on_main(obs, {"bot": self})
 
             else:
-                self.callback_parameters = {"ctr":ctr}
+                self.callback_parameters = {"ctr": ctr}
                 self.callback_method = self.train_marine
                 return to_do
 
@@ -931,10 +919,9 @@ class aBot2Agent(base_agent.BaseAgent):
         self.callback_method = None
         return
 
-            
     def trigger_supply_depots(self, obs, args):
         # have we been here before? are we thrashing?
-        #print("trying to lower or raise some supply depots")
+        # print("trying to lower or raise some supply depots")
         ctr = 0
         if "ctr" in args:
             ctr = args["ctr"]
@@ -945,27 +932,31 @@ class aBot2Agent(base_agent.BaseAgent):
 
         s_selected = obs.observation["single_select"]
         if s_selected is not None and len(s_selected) > 0:
-            if s_selected[0][0] == static.unit_ids["supply depot"]: lower_em = True
-            elif s_selected[0][0] == static.unit_ids["supply depot lowered"]: raise_em = True
+            if s_selected[0][0] == static.unit_ids["supply depot"]:
+                lower_em = True
+            elif s_selected[0][0] == static.unit_ids["supply depot lowered"]:
+                raise_em = True
 
         m_selected = obs.observation["multi_select"]
         if m_selected is not None and len(m_selected) > 0:
-            if m_selected[0][0] == static.unit_ids["supply depot"]: lower_em = True
-            elif m_selected[0][0] == static.unit_ids["supply depot lowered"]: raise_em = True
-
+            if m_selected[0][0] == static.unit_ids["supply depot"]:
+                lower_em = True
+            elif m_selected[0][0] == static.unit_ids["supply depot lowered"]:
+                raise_em = True
 
         # if supply depots are selected, trigger them
         # this is a lie -> if static.action_ids["lower supply depot"] in obs.observation["available_actions"]:
         if lower_em:
-            #print("we can lower the supply depots, let's do it")
+            # print("we can lower the supply depots, let's do it")
             # if the next thing to do isn't to press the build scv button... then try to select a command center again
 
-            to_do = { "id":static.action_ids["lower supply depot"], 
-                      "params":[[1]] 
+            to_do = {
+                        "id": static.action_ids["lower supply depot"],
+                        "params": [[1]]
                     }
-            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
-            #print(str(action))
-            #print(str(selected))
+            action = self.try_perform_action(obs, to_do)
+            # print(str(action))
+            # print(str(selected))
             self.callback_method = None
             self.callback_parameters = {}
             return action
@@ -973,42 +964,44 @@ class aBot2Agent(base_agent.BaseAgent):
         # if supply depots are selected, trigger them
         # this is a lie -> elif static.action_ids["raise supply depot"] in obs.observation["available_actions"]:
         elif raise_em:
-            #print("we can raise the supply depots, let's do it")
+            # print("we can raise the supply depots, let's do it")
             # if the next thing to do isn't to press the build scv button... then try to select a command center again
 
-            to_do = { "id":static.action_ids["raise supply depot"], 
-                      "params":[[1]] 
-                    }
-            action = self.try_perform_action(obs, to_do) # this is a bit of a safety measure, if it comes back false, it shouldn't run
-            #print(str(action))
-            #print(str(selected))
+            to_do = {
+                      "id": static.action_ids["raise supply depot"],
+                      "params": [[1]]
+                     }
+
+            action = self.try_perform_action(obs, to_do)
+            # print(str(action))
+            # print(str(selected))
             self.callback_method = None
             self.callback_parameters = {}
             return action
 
-        else: # supply depots not selected, select them
+        else:  # supply depots not selected, select them
             if ctr > 5:
                 # this is taking too long, abandon
                 self.callback_parameters = {}
                 self.callback_method = None
                 return
 
-            action = self.select_building(obs, {"type":static.unit_ids['supply depot']})
-            if action == None:
-                #print("there don't seem to be any raised supply depots to select")
+            action = self.select_building(obs, {"type": static.unit_ids['supply depot']})
+            if action is None:
+                # print("there don't seem to be any raised supply depots to select")
                 # There wasn't a supply depot on the screen... maybe they're already down
-                action = self.select_building(obs, {"type":static.unit_ids['supply depot lowered']})
+                action = self.select_building(obs, {"type": static.unit_ids['supply depot lowered']})
 
-            if action == None:
-                #print("there don't seem to be any lowered supply depots to select")
+            if action is None:
+                # print("there don't seem to be any lowered supply depots to select")
 
                 # TODO: ok, no supply depots on screen, maybe move to the wall location, for now just go to the main
-                self.callback_parameters = {"ctr":ctr}
+                self.callback_parameters = {"ctr": ctr}
                 self.callback_method = self.trigger_supply_depots
-                return map_reader.center_screen_on_main(obs, {"bot":self})
+                return map_reader.center_screen_on_main(obs, {"bot": self})
 
             if action is not None:
-                #print("ok, selecting some supply depots")
+                # print("ok, selecting some supply depots")
                 args["ctr"] = ctr
                 self.priority_queue.append([0, self.trigger_supply_depots, args])
                 self.callback_parameters = {}
@@ -1023,10 +1016,11 @@ class aBot2Agent(base_agent.BaseAgent):
     # control group
     # attack move
     def perform_zapp_brannigan_maneuver(self, obs, args):
-        #print("zapp")
+        # print("zapp")
         my_x, my_y = self.command_home_base
 
-        enemy_ys, enemy_xs = (obs.observation["feature_minimap"][static.screen_features["player relative"]] == static.params["player enemy"]).nonzero()
+        player_positions = obs.observation["feature_minimap"][static.screen_features["player relative"]]
+        enemy_ys, enemy_xs = np.nonzero(player_positions == static.params["player enemy"])
 
         center_x = 31
         center_y = 31
@@ -1034,34 +1028,37 @@ class aBot2Agent(base_agent.BaseAgent):
         enemy_x = center_x + center_x - my_x
         enemy_y = center_y + center_y - my_y
         
-        if(len(enemy_ys) > 0):
+        if len(enemy_ys) > 0:
             enemy_x = enemy_xs[0]
             enemy_y = enemy_ys[0]
 
-        
         action = { 
-            "id"    :   static.action_ids["select army"],
+            "id":   static.action_ids["select army"],
             "params":   [[static.params["now"]]]
-            }
+        }
 
-        # if there isn't an army to select, this will come back none... let's not send whatever SCV is selected off to die just yet.
+        # TODO:
+        #  if there isn't an army to select, this will come back none...
+        #  let's not send whatever SCV is selected off to die just yet.
+
         zapp = self.try_perform_action(obs, action)
 
         if zapp is None:
             return
         else:
-            self.priority_queue.append([0, self.control_group_selected, {"type":"append", "group":1}])
-            self.priority_queue.append([0, self.a_move, {"point":[enemy_x,enemy_y]}])
+            self.priority_queue.append([0, self.control_group_selected, {"type": "append", "group": 1}])
+            self.priority_queue.append([0, self.a_move, {"point": [enemy_x, enemy_y]}])
             return zapp
 
     def a_move(self, obs, args):
-        #print("a_move")
-        point = [0,0]
-        if "point" in args: point = args["point"]
+        # print("a_move")
+        point = [0, 0]
+        if "point" in args:
+            point = args["point"]
 
         action = { 
-            "id"    :   static.action_ids["attack minimap"],
-            "params":   [[static.params["now"]],point]
+            "id":   static.action_ids["attack minimap"],
+            "params":   [[static.params["now"]], point]
             }
 
         self.callback_method = None
@@ -1070,17 +1067,19 @@ class aBot2Agent(base_agent.BaseAgent):
         return self.try_perform_action(obs, action)
 
     def control_group_selected(self, obs, args):
-        #print("ctrl")
-        type = "append"
-        if "type" in args:type = args["type"]
+        # print("ctrl")
+        act_type = "append"
+        if "type" in args:
+            act_type = args["type"]
 
         group = 9
-        if "group" in args:group = args["group"]
+        if "group" in args:
+            group = args["group"]
 
-        command_id = [x for x, y in enumerate(actions.CONTROL_GROUP_ACT_OPTIONS) if y[0] == type]
+        command_id = [x for x, y in enumerate(actions.CONTROL_GROUP_ACT_OPTIONS) if y[0] == act_type]
 
         action = { 
-            "id"    :   static.action_ids["control group"],
+            "id":       static.action_ids["control group"],
             "params":   [command_id, [group]]
             }
 
@@ -1109,7 +1108,7 @@ class aBot2Agent(base_agent.BaseAgent):
                         command_id = [x for x, y in enumerate(actions.SELECT_UNIT_ACT_OPTIONS) if y[0] == "select"]
 
                         action = {
-                            "id"    :   static.action_ids["select unit"],
+                            "id":   static.action_ids["select unit"],
                             "params":   [command_id, [i]]
                         }
 
@@ -1128,7 +1127,7 @@ class aBot2Agent(base_agent.BaseAgent):
             if static.action_ids["harvest return"] in available_actions:
                 print("harvest return is available, do it")
                 action = { 
-                    "id"    :   static.action_ids["harvest return"],
+                    "id":       static.action_ids["harvest return"],
                     "params":   [[static.params["queued"]]]
                 }
 
@@ -1141,38 +1140,28 @@ class aBot2Agent(base_agent.BaseAgent):
             else:
                 print("harvest return wasn't available, let's find a mineral patch to go to")
 
-
-
                 self.callback_method = None
                 self.callback_parameters = {}
                 return
 
-
-
-
-
-                        
         idle_workers = obs.observation["player"].idle_worker_count
         if idle_workers > 0:
             
             select_id = [x for x, y in enumerate(actions.SELECT_WORKER_OPTIONS) if y[0] == 'select']
             action = { 
-                "id"    :   static.action_ids["select idle worker"],
+                "id":   static.action_ids["select idle worker"],
                 "params":   [select_id]
                 }
 
             # need to get idle worker!
-            #print("hey, this is broken!")
-            #action = actions.FUNCTIONS.select_idle_worker('select')       
+            # print("hey, this is broken!")
+            # action = actions.FUNCTIONS.select_idle_worker('select')
             
             # let's come back to make sure we've gotten an SCV
             self.callback_method = self.make_scv_work
             self.callback_parameters = args
 
             return self.try_perform_action(obs, action)
-
-        
-
 
     # whatever it takes to select an available worker scv
     # this command links back to the calling command if it's in args.
@@ -1186,17 +1175,16 @@ class aBot2Agent(base_agent.BaseAgent):
 
         # if we already have an scv single selected, then mission accomplished, return
         single_select = obs.observation["single_select"]
-        scv = None
+        # scv = None
         if len(single_select) > 0:
             if single_select[0][0] == static.unit_ids["scv"]:
-                scv = single_select[0]
-                #print("OK, so we have an SCV selected! " + str(scv))
+                # scv = single_select[0]
+                # print("OK, so we have an SCV selected! " + str(scv))
                 self.callback_method = None
                 self.callback_parameters = {}
                 return
 
-
-        #print("getting SCV")
+        # print("getting SCV")
         attempt = 0
         if "scv_select_attempt" in args:
             attempt = args["scv_select_attempt"]
@@ -1212,20 +1200,20 @@ class aBot2Agent(base_agent.BaseAgent):
         
         # select SCV:
         # check for idle SCVs
-        #print(str(obs.observation["player"]))
-        #print("idle workers:" + str(obs.observation["player"].idle_worker_count))
+        # print(str(obs.observation["player"]))
+        # print("idle workers:" + str(obs.observation["player"].idle_worker_count))
         idle_workers = obs.observation["player"].idle_worker_count
         if idle_workers > 0:
             
             select_id = [x for x, y in enumerate(actions.SELECT_WORKER_OPTIONS) if y[0] == 'select']
             action = { 
-                "id"    :   static.action_ids["select idle worker"],
+                "id":   static.action_ids["select idle worker"],
                 "params":   [select_id]
                 }
 
             # need to get idle worker!
-            #print("hey, this is broken!")
-            #action = actions.FUNCTIONS.select_idle_worker('select')       
+            # print("hey, this is broken!")
+            # action = actions.FUNCTIONS.select_idle_worker('select')
             
             # let's come back to make sure we've gotten an SCV
             self.callback_method = self.get_scv
@@ -1235,17 +1223,18 @@ class aBot2Agent(base_agent.BaseAgent):
 
         # if there are no idle SCVs check current screen
         else: 
-            # TODO: Finding the center of an SCV shouldn't be too tough, will need to store the height/width of scvs somewhere and select one from that.
+            # TODO: Finding the center of an SCV shouldn't be too tough, will need to store the height/width
+            #  of scvs somewhere and select one from that.
             unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
-            unit_y, unit_x = (unit_type == static.unit_ids["scv"]).nonzero()
+            unit_y, unit_x = np.nonzero(unit_type == static.unit_ids["scv"])
               
             if len(unit_y) > 0:
                 x = unit_x[0]
                 y = unit_y[0]
                 
                 action = { 
-                    "id"    :   static.action_ids["select point"], 
-                    "params":   [[static.params["now"]], [x,y]] 
+                    "id":   static.action_ids["select point"],
+                    "params":   [[static.params["now"]], [x, y]]
                 }
 
                 # let's come back to make sure we've gotten an SCV
@@ -1258,18 +1247,17 @@ class aBot2Agent(base_agent.BaseAgent):
                 # no SCVs on screen, we need to go find one!
                 # if there are no SCVs on screen, go to home screen
                 # TODO: there may also be SCVs working at random mineral patches, or in control groups.
-                x,y = self.command_home_base
+                x, y = self.command_home_base
 
                 action = { 
-                    "id"    :   static.action_ids["move camera"], 
-                    "params":   [[x,y]] 
+                    "id":   static.action_ids["move camera"],
+                    "params":   [[x, y]]
                 }
 
                 self.callback_method = self.get_scv
                 self.callback_parameters = args
                 
                 return self.try_perform_action(obs, action) 
-
 
         self.callback_method = None
         self.callback_parameters = {}
@@ -1282,7 +1270,7 @@ class aBot2Agent(base_agent.BaseAgent):
         gas = obs.observation["player"][2]
         empire_value = obs.observation["score_cumulative"][0]
 
-        o = np.zeros([8], dtype = int)
+        o = np.zeros([8], dtype=int)
         o[0] = current_time
         o[1] = minerals
         o[2] = gas
@@ -1302,7 +1290,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
         a = self.builder.get_action(o)
 
-        self.queue_builder_action(obs, {"action":a})
+        self.queue_builder_action(obs, {"action": a})
 
         return
 
@@ -1310,10 +1298,10 @@ class aBot2Agent(base_agent.BaseAgent):
     # will need self training, and the ability to save tensorflow training data per map.
     def continue_alice_the_builder(self, obs, args):
         # check if alice has been initialized: if not, do that here.
-        #print("You're calling alice the builder? That's all you had to say!")
+        # print("You're calling alice the builder? That's all you had to say!")
         current_time = obs.observation["game_loop"][0]
 
-        #obs.observation['score_cumulative']
+        # obs.observation['score_cumulative']
         empire_value = obs.observation["score_cumulative"][0]
         # new observable state o
         o = self.get_builder_state(obs, {})
@@ -1326,13 +1314,14 @@ class aBot2Agent(base_agent.BaseAgent):
         trainer = self.builder.wrap_up_action(o, r, d, _)
         if trainer == 1:
             print(f"last r of epoch: {r}")
-            # done training for this epoch, not sure how to quit the game, but if we don't schedule the next action, it'll just run out without any more buildings
+            # done training for this epoch, not sure how to quit the game, but if we don't schedule the next action,
+            # it'll just run out without any more buildings
             self.builder_running = False
             return
         elif trainer == -1:
             print(f"last r of final epoch: {r}")
             self.builder_running = False
-            quit() # there has to be a pysc2 way of doing this same thing.
+            quit()  # there has to be a pysc2 way of doing this same thing.
             return
             # done with the last epoch, close out.
         else:
@@ -1344,12 +1333,12 @@ class aBot2Agent(base_agent.BaseAgent):
             self.old_empire_value = empire_value
             self.old_time = current_time
 
-            self.queue_builder_action(obs, {"action":a})
+            self.queue_builder_action(obs, {"action": a})
         return
 
     def finish_alice_the_builder(self, reward):
         self.builder_running = False
-        #print("clearing buffer")
+        # print("clearing buffer")
         o = self.old_o
         r = reward
         d = True
@@ -1359,52 +1348,52 @@ class aBot2Agent(base_agent.BaseAgent):
 
     def queue_builder_action(self, obs, args):
         a = None
-        if "action" in args: a=args["action"]
+        if "action" in args:
+            a = args["action"]
         
-        if a == 1: # train SCV
-            #print("  Alice Says: train an scv")
+        if a == 1:  # train SCV
+            # print("  Alice Says: train an scv")
             self.priority_queue.append([4, self.train_scv, {}])
 
-        elif a == 2: # build supply depot
-            #print("  Alice Says: build a supply depot")
-            self.priority_queue.append([4, self.make_building, {"building":"supply depot"}])
+        elif a == 2:  # build supply depot
+            # print("  Alice Says: build a supply depot")
+            self.priority_queue.append([4, self.make_building, {"building": "supply depot"}])
 
-        elif a == 3: # build barracks
-            #print("  Alice Says: build a supply depot")
-            self.priority_queue.append([4, self.make_building, {"building":"barracks"}])
+        elif a == 3:  # build barracks
+            # print("  Alice Says: build a supply depot")
+            self.priority_queue.append([4, self.make_building, {"building": "barracks"}])
 
-        elif a == 4: # get SCVs back to work
+        elif a == 4:  # get SCVs back to work
             self.priority_queue.append([4, self.make_scv_work, {}])
             pass
 
-        elif a == 5: # build marine
+        elif a == 5:  # build marine
             self.priority_queue.append([4, self.train_marine, {}])
             pass
 
-        elif a == 6: # trigger supply depots
+        elif a == 6:  # trigger supply depots
             self.priority_queue.append([4, self.trigger_supply_depots, {}])
             pass
 
-        elif a == 7: # attack move across the map
+        elif a == 7:  # attack move across the map
             self.priority_queue.append([4, self.perform_zapp_brannigan_maneuver, {}])
             pass
 
-        elif a == 8: # perform building maintenance
-            self.priority_queue.append([4, self.building_maintenance, {"action free":False}])
+        elif a == 8:  # perform building maintenance
+            self.priority_queue.append([4, self.building_maintenance, {"action free": False}])
             pass
 
-        elif a == 9: # not sure yet
+        elif a == 9:  # not sure yet
             
             pass
 
-        else: # no op
+        else:  # no op
             
             pass
 
         return
 
-
-    def schedule_print_data(self, obs, args):       
+    def schedule_print_data(self, obs, args):
         current_time = obs.observation["game_loop"][0]
         # recurring action to print out some data
         self.schedule_action(obs, current_time + 100, self.schedule_print_data, {})
@@ -1412,58 +1401,64 @@ class aBot2Agent(base_agent.BaseAgent):
         return
 
     # print out useful data for debugging whatever you're working on
+    @staticmethod
     def print_data(self, obs, args):
         single_select = obs.observation["single_select"]
         
-        #print(str(obs.observation.keys()))
-        #dict_keys(['single_select', 'multi_select', 'build_queue', 'cargo', 'cargo_slots_available', 'feature_screen', 'feature_minimap', 'last_actions',
-        #  'action_result', 'alerts', 'game_loop', 'score_cumulative', 'score_by_category', 'score_by_vital', 'player', 'control_groups', 'feature_units',
-        #  'camera_position', 'available_actions'])
+        # print(str(obs.observation.keys()))
+        # dict_keys(['single_select', 'multi_select', 'build_queue', 'cargo', 'cargo_slots_available', 'feature_screen',
+        # 'feature_minimap', 'last_actions',
+        # 'action_result', 'alerts', 'game_loop', 'score_cumulative', 'score_by_category', 'score_by_vital', 'player',
+        # 'control_groups', 'feature_units',
+        # 'camera_position', 'available_actions'])
 
-        #print("Obs Camera Position: " + str(obs.observation["camera_position"]))
-        #print("Tile Size: " + str(self.tile_size))    
+        # print("Obs Camera Position: " + str(obs.observation["camera_position"]))
+        # print("Tile Size: " + str(self.tile_size))
 
         if len(single_select) > 0:
             sel = obs.observation['feature_screen'][static.screen_features["selected"]]
             ys, xs = (sel == 1).nonzero()
-            current_time = obs.observation["game_loop"][0]
+            # current_time = obs.observation["game_loop"][0]
 
-            #print(str(sel))
-            buildings = self.buildings
-            for building in buildings:
-                pass
-                #print("Building: " + str(building))
-            #print(f"score_by_category: {obs.observation['score_by_category']}")
-            #if single_select[0][0] == unit_ids["command center"]:
-            #print("Current Game Time: " + str(current_time))
-            #print("Alerts: " + str(obs.observation["alerts"]))
-            #print("Select info: " + str(single_select))
-            #print("idle workers:" + str(obs.observation["player"].idle_worker_count))
-            #print("player: " + str(obs.observation["player"]))
-            #print(f"Score_cumulativ: " + str(obs.observation['score_cumulative']))
-            #print("Last Actions: " + str(obs.observation["last_actions"]))
-            #print("Action Result: " + str(obs.observation["action_result"]))
-            #print("Player: " + str(obs.observation["player"]))
-            #print("Feature Units: " + str(obs.observation["feature_units"]))
+            # print(str(sel))
+            # buildings = self.buildings
+            # for building in buildings:
+            #    pass
+            #    print("Building: " + str(building))
+
+            # print(f"score_by_category: {obs.observation['score_by_category']}")
+            # if single_select[0][0] == unit_ids["command center"]:
+            # print("Current Game Time: " + str(current_time))
+            # print("Alerts: " + str(obs.observation["alerts"]))
+            # print("Select info: " + str(single_select))
+            # print("idle workers:" + str(obs.observation["player"].idle_worker_count))
+            # print("player: " + str(obs.observation["player"]))
+            # print(f"Score_cumulative: " + str(obs.observation['score_cumulative']))
+            # print("Last Actions: " + str(obs.observation["last_actions"]))
+            # print("Action Result: " + str(obs.observation["action_result"]))
+            # print("Player: " + str(obs.observation["player"]))
+            # print("Feature Units: " + str(obs.observation["feature_units"]))
 
             if len(xs) > 0:
-                x = util.round(xs.mean())
-                y = util.round(ys.mean())
+                pass
+                # x = util.round(xs.mean())
+                # y = util.round(ys.mean())
 
-                ax, ay = map_reader.get_absolute_location(obs, {"point":[x, y],"bot":self})
+                # ax, ay = map_reader.get_absolute_location(obs, {"point": [x, y], "bot": self})
 
-                #print(f"Selected item at screen: x{x},y{y}")
-                #print(f"Selected item at absolute point: x{ax},y{ay}")
+                # print(f"Selected item at screen: x{x},y{y}")
+                # print(f"Selected item at absolute point: x{ax},y{ay}")
             else:
-                #print("nothing is selected")
+                # print("nothing is selected")
                 pass
 
-        #if single_select[0][0] == unit_ids["command center"]:
+        # if single_select[0][0] == unit_ids["command center"]:
         return
 
     # Returns an action to select the center point of a building type
     # Returns None if that building isn't available on the screen
-    # TODO: If there are multiple buildings make sure to select the center of a building based on the size of the building
+    # TODO: If there are multiple buildings make sure to select the center of a building based on the
+    #   size of the building
     def select_building(self, obs, args):
         type = None
         if "type" in args:
@@ -1479,35 +1474,37 @@ class aBot2Agent(base_agent.BaseAgent):
             if bldg["unit id"] == type:
                 offset = bldg["tiles"][0] * self.tile_size[0] / 2
 
-        #print("trying to select: " + str(type))
+        # print("trying to select: " + str(type))
         # Find the pixels that relate to the unit
         unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
-        ys, xs = (unit_type == type).nonzero()
+        ys, xs = np.nonzero(unit_type == type)
 
         # TODO: if after calibration, check against known building sizes to see if we have multiple on screen 
         #  - On multiple buildings, select the center point of the top left building based on known building dimensions.
-        # TODO: if there is no building on screen, check the building tables and go to a minimap location with the building
+        # TODO: if there is no building on screen, check the building tables and go to a minimap location
+        #   with the building
             
         # find the left most pixel relating to the building
         if len(xs) > 0:
             min_x = min(xs)
-            x, y = [min_x,0]
+            x, y = [min_x, 0]
             for i in range(len(xs)):
                 if xs[i] == min_x: 
                     y = ys[i]
                     x = x + offset
                     break
 
-            if x >= self.screen_dimensions[0]: x = self.screen_dimensions[0] - 1
+            if x >= self.screen_dimensions[0]:
+                x = self.screen_dimensions[0] - 1
 
             # queue up an action to click on the center pixel
-            #self.callback_method = None
-            #self.callback_parameters = {}
+            # self.callback_method = None
+            # self.callback_parameters = {}
             select_type = [x for x, y in enumerate(actions.SELECT_POINT_ACT_OPTIONS) if y[0] == 'select_all_type']
 
             action = { 
-                        "id"    :   static.action_ids["select point"], 
-                        "params":   [select_type, [x,y]] 
+                        "id":       static.action_ids["select point"],
+                        "params":   [select_type, [x, y]]
                      }
             return self.try_perform_action(obs, action)
 
@@ -1515,9 +1512,14 @@ class aBot2Agent(base_agent.BaseAgent):
 
 
 def main():
-    #print(sys.path)
-    os.system('python -m run_agent --map Simple64 --agent abot2.aBot2Agent --agent_race terran --max_agent_steps 0 --game_steps_per_episode 50000')
+    # print(sys.path)
+    os.system('python -m run_agent '
+              '--map Simple64 '
+              '--agent abot2.aBot2Agent '
+              '--agent_race terran '
+              '--max_agent_steps 0 '
+              '--game_steps_per_episode 50000')
+
 
 if __name__ == "__main__":
     main()
-
