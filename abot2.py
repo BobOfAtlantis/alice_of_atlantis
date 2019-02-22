@@ -105,6 +105,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
         self.charting_order = None
 
+    # called once, after init
     def setup(self, obs_spec, action_spec):
         super().setup(obs_spec, action_spec)
         self.builder = None
@@ -147,6 +148,7 @@ class aBot2Agent(base_agent.BaseAgent):
         # 'feature_units': (0, 28),
         # 'camera_position': (2,)}
 
+    # called after each game ends
     def reset(self):
         super().reset()
         print(f"episode: {self.episodes}")
@@ -186,82 +188,13 @@ class aBot2Agent(base_agent.BaseAgent):
         # [[100,self.build_supply_depot,{}]]
         self.schedule = []
 
-    def try_callback(self, obs):
-        if self.callback_method is None:
-            self.callback_parameters = None
-            return
-        else:
-            return self.callback_method(obs, self.callback_parameters)
-
-    def perform_priority_action(self, obs):
-        if len(self.priority_queue) > 0:
-            # start with zero in case you really, really need something now.
-            # for each priority level
-            for i in range(10):
-                # find the first item with that priority level
-                for x in range(len(self.priority_queue)):
-                    # if an element has the correct priority
-                    if self.priority_queue[x][0] == i:
-                        action = self.priority_queue.pop(x)
-                        func = action[1]
-                        params = action[2]
-                        
-                        return func(obs, params)   
-
-    # a list of scheduled actions. Some actions will re-schedule themselves,
-    # until the ai component for schedule management is complete
-    # priority queue items need to be able to fail and pass on the queue to the next item. 
-    # the schedule should be responsible for dealing with the issues of a failure.
-    # On failure, a re-scheduled event should be arranged
-
-    # add a function call to the schedule, if the game loop >= time, the function will be run
-    def schedule_action(self, obs, time, function, params):
-        # print("action scheduled: " + str(function))
-        self.schedule.append([time, function, params])
-        return
-
-    # run any functions which are ready and on the schedule
-    def check_schedule(self, obs):
-        game_loop = obs.observation["game_loop"][0]
-
-        for item in self.schedule:
-            item_time = item[0]
-            item_func = item[1]
-            item_params = item[2]
-
-            if game_loop >= item_time:
-                # print("running scheduled action: " + str(item_func))
-                # it's time to run the thing, mark it off the schedule
-                self.schedule.remove(item)
-                # run it
-                ret = item_func(obs, item_params)
-                # TODO: if ret came back with a returned action, toss it on the schedule.
-                if ret is not None:
-                    print("PROBLEM: scheduled functions don't run actions! Toss that badboy on the priority queue!")
-
-    def try_perform_action(self, obs, action):
-        if action is None or action is False:
-            print("You're trying to perform a False action")
-            return None
-        else:
-            # print("Doing action: " + str(action))
-            action_id = action["id"]
-            action_params = action["params"]
-
-            if action_id not in obs.observation["available_actions"]:
-                # print("Warning, cannot perform action: " + str(action_id) + " We should reschedule")
-                return None
-
-            action = actions.FunctionCall(action_id, action_params)
-            return action
-
     # the primary function for pysc2 agents. called each time the game gives access to the bot
     def step(self, obs):
         super().step(obs)
         self.reward = obs.reward
         if self.reward != 0:
             print(f"reward: {self.reward}")
-        
+
         # time.sleep(.5)
 
         alerts = obs.observation["alerts"]
@@ -285,9 +218,9 @@ class aBot2Agent(base_agent.BaseAgent):
         # This prevents thrashing on the priority queue, while giving a chance to check if a previous action worked
         cb = self.try_callback(obs)
         if cb is not False and cb is not None:
-            return cb 
+            return cb
 
-        # add any required calls to the priority_queue
+            # add any required calls to the priority_queue
         self.check_schedule(obs)
 
         # if there's a priority action to do, do the most important priority action
@@ -302,14 +235,76 @@ class aBot2Agent(base_agent.BaseAgent):
         # should be the only no_op
         return actions.FUNCTIONS.no_op()
 
-    # Load up the priority_queue with important things to do at the beginning of the game.
-    # 1) Build an SCV
-    # 2) add starting command center to current buildings list
-    # 3) Calibrate minimap and tile dimensions,
-    # -) Control group Command Center (10) Note, this is now linked to build an scv.
-    # 4) Control group SCVs
-    # 5) Plan supply depot location
+    # if there is a callback action assigned, run through it.  make sure to unset
+    #   any unwanted callback to prevent getting stuck here
+    def try_callback(self, obs):
+        if self.callback_method is None:
+            self.callback_parameters = None
+            return
+        else:
+            return self.callback_method(obs, self.callback_parameters)
 
+    # if there are no callback actions, perform any priority actions in order of priority and then list order
+    def perform_priority_action(self, obs):
+        if len(self.priority_queue) > 0:
+            # start with zero in case you really, really need something now.
+            # for each priority level
+            for i in range(10):
+                # find the first item with that priority level
+                for x in range(len(self.priority_queue)):
+                    # if an element has the correct priority
+                    if self.priority_queue[x][0] == i:
+                        action = self.priority_queue.pop(x)
+                        func = action[1]
+                        params = action[2]
+                        
+                        return func(obs, params)   
+
+    # a list of scheduled actions. Some actions will re-schedule themselves,
+
+    # add a function call to the schedule, if the game loop >= time, the function will be run
+    def schedule_action(self, obs, time, function, params):
+        # print("action scheduled: " + str(function))
+        self.schedule.append([time, function, params])
+        return
+
+    # run any functions which are ready and on the schedule based on game loop time
+    def check_schedule(self, obs):
+        game_loop = obs.observation["game_loop"][0]
+
+        for item in self.schedule:
+            item_time = item[0]
+            item_func = item[1]
+            item_params = item[2]
+
+            if game_loop >= item_time:
+                # print("running scheduled action: " + str(item_func))
+                # it's time to run the thing, mark it off the schedule
+                self.schedule.remove(item)
+                # run it
+                ret = item_func(obs, item_params)
+                # TODO: if ret came back with a returned action, toss it on the schedule.
+                if ret is not None:
+                    print("PROBLEM: scheduled functions don't run actions! Toss that badboy on the priority queue!")
+
+    # safety method to make sure an action is available before attempting to run it. otherwise the game crashes
+    def try_perform_action(self, obs, action):
+        if action is None or action is False:
+            print("You're trying to perform a False action")
+            return None
+        else:
+            # print("Doing action: " + str(action))
+            action_id = action["id"]
+            action_params = action["params"]
+
+            if action_id not in obs.observation["available_actions"]:
+                # print("Warning, cannot perform action: " + str(action_id) + " We should reschedule")
+                return None
+
+            action = actions.FunctionCall(action_id, action_params)
+            return action
+
+    # high level first steps for the bot to take once the game starts
     def init_and_calibrate(self, obs):
         self.priority_queue = [
                 [2, self.set_up_builder_ai, {}],
@@ -331,7 +326,7 @@ class aBot2Agent(base_agent.BaseAgent):
 
         return
 
-    # if it's already set up, don't re-set it.
+    # PPO based RL agent for high level game management
     def set_up_builder_ai(self, obs, args):
         if self.builder is None:
             self.map_name = util.get_map_folder(obs, args={"bot": self})
@@ -567,7 +562,7 @@ class aBot2Agent(base_agent.BaseAgent):
             else: 
                 working_list.remove(b)
 
-    # mop indicates that this action requires multiple operations
+    # train an scv
     def train_scv(self, obs, args):
         # have we been here before? are we thrashing?
         ctr = 0
@@ -624,6 +619,7 @@ class aBot2Agent(base_agent.BaseAgent):
                 self.callback_method = self.train_scv
                 return to_do
 
+    # control group on screen scvs. Useful for counting
     def control_group_scvs(self, obs, args):
         self.callback_method = None
         self.callback_parameters = {}
@@ -1383,6 +1379,57 @@ class aBot2Agent(base_agent.BaseAgent):
 
         return
 
+    # Returns None if that building isn't available on the screen
+    def select_building(self, obs, args):
+        bldg_type = None
+        if "type" in args:
+            bldg_type = args["type"]
+
+        param = "select_all_type"
+        if "param" in args:
+            param = args["param"]
+
+        offset = 0
+
+        for bldg in self.building_dimensions:
+            if bldg["unit id"] == bldg_type:
+                offset = bldg["tiles"][0] * self.tile_size[0] / 2
+
+        # print("trying to select: " + str(type))
+        # Find the pixels that relate to the unit
+        unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
+        ys, xs = np.nonzero(unit_type == bldg_type)
+
+        # TODO: if there is no building on screen, check the building tables and go to a minimap location
+        #   with the building
+
+        # find the left most pixel relating to the building
+        if len(xs) > 0:
+            min_x = min(xs)
+            x, y = [min_x, 0]
+            for i in range(len(xs)):
+                if xs[i] == min_x:
+                    y = ys[i]
+                    x = x + offset
+                    break
+
+            if x >= self.screen_dimensions[0]:
+                x = self.screen_dimensions[0] - 1
+
+            # queue up an action to click on the center pixel
+            # self.callback_method = None
+            # self.callback_parameters = {}
+            select_type = [x for x, y in enumerate(actions.SELECT_POINT_ACT_OPTIONS) if y[0] == 'select_all_type']
+
+            action = {
+                "id":       static.action_ids["select point"],
+                "params":   [select_type, [x, y]]
+            }
+            return self.try_perform_action(obs, action)
+
+        return None
+
+    # recurring scheduled print to console of useful game state for debugging
     def schedule_print_data(self, obs, args):
         current_time = obs.observation["game_loop"][0]
         # recurring action to print out some data
@@ -1393,7 +1440,7 @@ class aBot2Agent(base_agent.BaseAgent):
     # print out useful data for debugging whatever you're working on
     def print_data(self, obs, args):
         single_select = obs.observation["single_select"]
-        
+
         # print(str(obs.observation.keys()))
         # dict_keys(['single_select', 'multi_select', 'build_queue', 'cargo', 'cargo_slots_available', 'feature_screen',
         # 'feature_minimap', 'last_actions',
@@ -1444,61 +1491,6 @@ class aBot2Agent(base_agent.BaseAgent):
         # if single_select[0][0] == unit_ids["command center"]:
         return
 
-    # Returns an action to select the center point of a building type
-    # Returns None if that building isn't available on the screen
-    # TODO: If there are multiple buildings make sure to select the center of a building based on the
-    #   size of the building
-    def select_building(self, obs, args):
-        type = None
-        if "type" in args:
-            type = args["type"]
-
-        param = "select_all_type"
-        if "param" in args:
-            param = args["param"]
-
-        offset = 0
-        
-        for bldg in self.building_dimensions:
-            if bldg["unit id"] == type:
-                offset = bldg["tiles"][0] * self.tile_size[0] / 2
-
-        # print("trying to select: " + str(type))
-        # Find the pixels that relate to the unit
-        unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
-        ys, xs = np.nonzero(unit_type == type)
-
-        # TODO: if after calibration, check against known building sizes to see if we have multiple on screen 
-        #  - On multiple buildings, select the center point of the top left building based on known building dimensions.
-        # TODO: if there is no building on screen, check the building tables and go to a minimap location
-        #   with the building
-            
-        # find the left most pixel relating to the building
-        if len(xs) > 0:
-            min_x = min(xs)
-            x, y = [min_x, 0]
-            for i in range(len(xs)):
-                if xs[i] == min_x: 
-                    y = ys[i]
-                    x = x + offset
-                    break
-
-            if x >= self.screen_dimensions[0]:
-                x = self.screen_dimensions[0] - 1
-
-            # queue up an action to click on the center pixel
-            # self.callback_method = None
-            # self.callback_parameters = {}
-            select_type = [x for x, y in enumerate(actions.SELECT_POINT_ACT_OPTIONS) if y[0] == 'select_all_type']
-
-            action = { 
-                        "id":       static.action_ids["select point"],
-                        "params":   [select_type, [x, y]]
-                     }
-            return self.try_perform_action(obs, action)
-
-        return None
-
 
 def main():
     # print(sys.path)
@@ -1512,3 +1504,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
