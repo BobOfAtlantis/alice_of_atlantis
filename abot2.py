@@ -24,7 +24,9 @@ from alice.lib import map_reader, building_planner, static, util, builder_ai
 from pysc2.agents import base_agent
 from pysc2.lib import actions  # features, units
 
+# when printing numpy arrays print out even fairly large arrays
 np.set_printoptions(threshold=10000)
+
 
 class aBot2Agent(base_agent.BaseAgent):
     def __init__(self):
@@ -1389,6 +1391,12 @@ class aBot2Agent(base_agent.BaseAgent):
         if "param" in args:
             param = args["param"]
 
+        # TODO: if there is no building on screen, check the building tables and go to a minimap location
+        #   with the building
+        off_screen = False
+        if "off_screen" in args:
+            off_screen = args["off_screen"]
+
         offset = 0
 
         for bldg in self.building_dimensions:
@@ -1399,9 +1407,6 @@ class aBot2Agent(base_agent.BaseAgent):
         # Find the pixels that relate to the unit
         unit_type = obs.observation['feature_screen'][static.screen_features["unit type"]]
         ys, xs = np.nonzero(unit_type == bldg_type)
-
-        # TODO: if there is no building on screen, check the building tables and go to a minimap location
-        #   with the building
 
         # find the left most pixel relating to the building
         if len(xs) > 0:
@@ -1504,5 +1509,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
